@@ -1,0 +1,15 @@
+{
+  "name": "nouncil-discord-bot",
+  "version": "1.0.0",
+  "description": "Open Nouncil governance Discord bot",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "ethers": "^6.10.0",
+    "node-fetch": "^3.3.2"
+  }
+}
