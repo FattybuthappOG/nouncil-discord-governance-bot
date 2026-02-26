@@ -36,7 +36,7 @@ const GOVERNOR_ABI = [
   "function proposals(uint256) view returns (uint256 id,address proposer,uint256 eta,uint256 startBlock,uint256 endBlock,uint256 forVotes,uint256 againstVotes,uint256 abstainVotes,bool canceled,bool executed)"
 ]
 
-// Render port
+// Keep Render alive
 http.createServer((req, res) => {
   res.writeHead(200)
   res.end("Bot running")
@@ -60,7 +60,7 @@ function savePolls(data) {
 const provider = new ethers.JsonRpcProvider(ETH_RPC_URL)
 const governor = new ethers.Contract(GOVERNOR_ADDRESS, GOVERNOR_ABI, provider)
 
-// ================= SLASH COMMANDS =================
+// ================= COMMANDS =================
 const commands = [
   new SlashCommandBuilder()
     .setName("create-poll")
@@ -68,12 +68,7 @@ const commands = [
     .addStringOption(o =>
       o.setName("title").setDescription("Poll title").setRequired(true))
     .addStringOption(o =>
-      o.setName("description").setDescription("Poll description").setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName("participation")
-    .setDescription("Show participation rate for nouncilors")
-
+      o.setName("description").setDescription("Poll description").setRequired(true))
 ].map(c => c.toJSON())
 
 const rest = new REST({ version: "10" }).setToken(TOKEN)
@@ -113,12 +108,12 @@ function createEmbed(poll) {
   return embed
 }
 
-// ================= PROPOSAL BACKFILL =================
+// ================= PROPOSAL AUTO (LAST 10 ONLY) =================
 async function checkProposals() {
   const proposalCount = Number(await governor.proposalCount())
   const polls = loadPolls()
 
-  const start = Math.max(1, proposalCount - 100)
+  const start = Math.max(1, proposalCount - 10)
 
   for (let i = start; i <= proposalCount; i++) {
 
@@ -128,7 +123,6 @@ async function checkProposals() {
     if (exists) continue
 
     const proposal = await governor.proposals(i)
-
     if (proposal.canceled || proposal.executed) continue
 
     const endBlock = Number(proposal.endBlock)
@@ -152,23 +146,7 @@ async function checkProposals() {
 
     const channel = await client.channels.fetch(PROPOSAL_CHANNEL_ID)
 
-    const embed = new EmbedBuilder()
-      .setTitle(`Prop ${i}: ${titleParsed}`)
-      .setDescription(`https://nouncil.club/proposal/${i}`)
-      .setFooter({ text: `Closes: ${new Date(closesAt).toUTCString()}` })
-      .addFields(
-        { name: "For", value: "0", inline: true },
-        { name: "Against", value: "0", inline: true },
-        { name: "Abstain", value: "0", inline: true }
-      )
-
-    const message = await channel.send({
-      content: `<@&${NOUNCIL_ROLE_ID}>`,
-      embeds: [embed],
-      components: [createButtons()]
-    })
-
-    polls[message.id] = {
+    const poll = {
       type: "proposal",
       proposalId: i,
       title: `Prop ${i}: ${titleParsed}`,
@@ -176,12 +154,27 @@ async function checkProposals() {
       votes: {},
       closesAt,
       closed: false,
-      channelId: message.channelId
+      channelId: PROPOSAL_CHANNEL_ID
     }
 
-    savePolls(polls)
+    const message = await channel.send({
+      content: `<@&${NOUNCIL_ROLE_ID}>`,
+      embeds: [createEmbed(poll)],
+      components: [createButtons()]
+    })
 
-    console.log(`Created poll for proposal ${i}`)
+    const thread = await message.startThread({
+      name: `Prop ${i} — Discussion`,
+      autoArchiveDuration: 1440
+    })
+
+    poll.threadId = thread.id
+
+    const updated = loadPolls()
+    updated[message.id] = poll
+    savePolls(updated)
+
+    console.log("Created proposal poll:", i)
   }
 }
 
@@ -249,47 +242,16 @@ client.on(Events.InteractionCreate, async interaction => {
         fetchReply: true
       })
 
+      const thread = await message.startThread({
+        name: `${title} — Discussion`,
+        autoArchiveDuration: 1440
+      })
+
+      poll.threadId = thread.id
+
       const polls = loadPolls()
       polls[message.id] = poll
       savePolls(polls)
-    }
-
-    if (interaction.commandName === "participation") {
-
-      const polls = loadPolls()
-      const proposalPolls = Object.values(polls).filter(
-        p => p.type === "proposal" && p.closed
-      )
-
-      const totalEligible = proposalPolls.length
-
-      const guild = await client.guilds.fetch(GUILD_ID)
-      const members = await guild.members.fetch()
-
-      const nouncilors = members.filter(m =>
-        m.roles.cache.has(NOUNCIL_ROLE_ID)
-      )
-
-      let output = ""
-
-      nouncilors.forEach(member => {
-        let voted = 0
-        proposalPolls.forEach(p => {
-          if (p.votes[member.id]) voted++
-        })
-
-        const percent = totalEligible > 0
-          ? ((voted / totalEligible) * 100).toFixed(1)
-          : 0
-
-        output += `<@${member.id}> — ${voted}/${totalEligible} (${percent}%)\n`
-      })
-
-      const embed = new EmbedBuilder()
-        .setTitle("Nouncil Participation")
-        .setDescription(output || "No closed proposal polls yet.")
-
-      await interaction.reply({ embeds: [embed] })
     }
   }
 
@@ -300,13 +262,48 @@ client.on(Events.InteractionCreate, async interaction => {
     const poll = polls[interaction.message.id]
     if (!poll || poll.closed) return
 
-    poll.votes[interaction.user.id] = { choice }
+    const modal = new ModalBuilder()
+      .setCustomId(`comment_${choice}`)
+      .setTitle("Vote Reason (Optional)")
+
+    const input = new TextInputBuilder()
+      .setCustomId("vote_comment")
+      .setLabel("Reason for your vote")
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false)
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input))
+    await interaction.showModal(modal)
+  }
+
+  if (interaction.isModalSubmit()) {
+
+    const choice = interaction.customId.replace("comment_", "")
+    const polls = loadPolls()
+    const poll = polls[interaction.message.id]
+    if (!poll || poll.closed) return
+
+    const comment = interaction.fields.getTextInputValue("vote_comment")
+
+    poll.votes[interaction.user.id] = {
+      choice,
+      comment
+    }
+
     savePolls(polls)
 
     await interaction.update({
       embeds: [createEmbed(poll)],
       components: [createButtons()]
     })
+
+    if (poll.threadId) {
+      const thread = await client.channels.fetch(poll.threadId)
+      await thread.send(
+        `<@${interaction.user.id}> voted **${choice.toUpperCase()}**` +
+        (comment ? `\nReason: ${comment}` : "")
+      )
+    }
   }
 })
 
