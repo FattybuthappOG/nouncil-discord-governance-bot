@@ -1,6 +1,6 @@
 {
   "name": "nouncil-discord-bot",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "main": "index.js",
   "engines": {
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "discord.js": "^14.14.1",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "ethers": "^6.10.0"
   }
 }
