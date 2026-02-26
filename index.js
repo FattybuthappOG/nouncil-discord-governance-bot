@@ -21,6 +21,8 @@ import { ethers } from "ethers"
 
 dotenv.config()
 
+console.log("Nouncil Bot — Stable Build Active")
+
 const TOKEN = process.env.DISCORD_TOKEN
 const CLIENT_ID = process.env.CLIENT_ID
 const GUILD_ID = process.env.GUILD_ID
@@ -60,7 +62,7 @@ function savePolls(data) {
 const provider = new ethers.JsonRpcProvider(ETH_RPC_URL)
 const governor = new ethers.Contract(GOVERNOR_ADDRESS, GOVERNOR_ABI, provider)
 
-// ================= COMMANDS =================
+// ================= COMMAND =================
 const commands = [
   new SlashCommandBuilder()
     .setName("create-poll")
@@ -108,73 +110,80 @@ function createEmbed(poll) {
   return embed
 }
 
-// ================= PROPOSAL AUTO (LAST 10 ONLY) =================
+// ================= PROPOSAL AUTO =================
 async function checkProposals() {
-  const proposalCount = Number(await governor.proposalCount())
-  const polls = loadPolls()
+  try {
+    const proposalCount = Number(await governor.proposalCount())
+    const polls = loadPolls()
+    const start = Math.max(1, proposalCount - 10)
 
-  const start = Math.max(1, proposalCount - 10)
+    for (let i = start; i <= proposalCount; i++) {
 
-  for (let i = start; i <= proposalCount; i++) {
+      const exists = Object.values(polls).some(
+        p => p.type === "proposal" && p.proposalId === i
+      )
+      if (exists) continue
 
-    const exists = Object.values(polls).some(
-      p => p.type === "proposal" && p.proposalId === i
-    )
-    if (exists) continue
+      const proposal = await governor.proposals(i)
+      if (proposal.canceled || proposal.executed) continue
 
-    const proposal = await governor.proposals(i)
-    if (proposal.canceled || proposal.executed) continue
+      const endBlock = Number(proposal.endBlock)
+      const block = await provider.getBlock(endBlock)
+      if (!block) continue
 
-    const endBlock = Number(proposal.endBlock)
-    const block = await provider.getBlock(endBlock)
-    if (!block) continue
+      const endTimestamp = block.timestamp * 1000
+      if (Date.now() > endTimestamp) continue
 
-    const endTimestamp = block.timestamp * 1000
-    if (Date.now() > endTimestamp) continue
+      const filter = governor.filters.ProposalCreated(i)
+      const events = await governor.queryFilter(filter)
+      if (!events.length) continue
 
-    const filter = governor.filters.ProposalCreated(i)
-    const events = await governor.queryFilter(filter)
-    if (!events.length) continue
+      const rawDesc = events[0].args.description
+      const firstLine = rawDesc.split("\n")[0].trim()
+      const titleParsed = firstLine.startsWith("#")
+        ? firstLine.replace(/^#+\s*/, "")
+        : firstLine.substring(0, 100)
 
-    const rawDesc = events[0].args.description
-    const firstLine = rawDesc.split("\n")[0].trim()
-    const titleParsed = firstLine.startsWith("#")
-      ? firstLine.replace(/^#+\s*/, "")
-      : firstLine.substring(0, 100)
+      const closesAt = endTimestamp - (24 * 60 * 60 * 1000)
 
-    const closesAt = endTimestamp - (24 * 60 * 60 * 1000)
+      const channel = await client.channels.fetch(PROPOSAL_CHANNEL_ID)
 
-    const channel = await client.channels.fetch(PROPOSAL_CHANNEL_ID)
+      const poll = {
+        type: "proposal",
+        proposalId: i,
+        title: `Prop ${i}: ${titleParsed}`,
+        description: `https://nouncil.club/proposal/${i}`,
+        votes: {},
+        closesAt,
+        closed: false,
+        channelId: PROPOSAL_CHANNEL_ID
+      }
 
-    const poll = {
-      type: "proposal",
-      proposalId: i,
-      title: `Prop ${i}: ${titleParsed}`,
-      description: `https://nouncil.club/proposal/${i}`,
-      votes: {},
-      closesAt,
-      closed: false,
-      channelId: PROPOSAL_CHANNEL_ID
+      const message = await channel.send({
+        content: `<@&${NOUNCIL_ROLE_ID}>`,
+        embeds: [createEmbed(poll)],
+        components: [createButtons()]
+      })
+
+      try {
+        const thread = await message.startThread({
+          name: `Prop ${i} — Discussion`,
+          autoArchiveDuration: 1440
+        })
+        poll.threadId = thread.id
+      } catch (err) {
+        console.log("Thread creation failed:", err)
+      }
+
+      const updated = loadPolls()
+      updated[message.id] = poll
+      savePolls(updated)
+
+      console.log("Created proposal poll:", i)
     }
 
-    const message = await channel.send({
-      content: `<@&${NOUNCIL_ROLE_ID}>`,
-      embeds: [createEmbed(poll)],
-      components: [createButtons()]
-    })
-
-    const thread = await message.startThread({
-      name: `Prop ${i} — Discussion`,
-      autoArchiveDuration: 1440
-    })
-
-    poll.threadId = thread.id
-
-    const updated = loadPolls()
-    updated[message.id] = poll
-    savePolls(updated)
-
-    console.log("Created proposal poll:", i)
+  } catch (err) {
+    console.log("Proposal check error:", err)
   }
 }
 
@@ -202,7 +211,7 @@ setInterval(async () => {
   }
 }, 60000)
 
-// ================= EVENTS =================
+// ================= READY =================
 client.once(Events.ClientReady, async () => {
   await rest.put(
     Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
@@ -212,98 +221,110 @@ client.once(Events.ClientReady, async () => {
   checkProposals()
 })
 
+// ================= INTERACTIONS =================
 client.on(Events.InteractionCreate, async interaction => {
 
-  if (interaction.isChatInputCommand()) {
+  try {
 
-    if (interaction.commandName === "create-poll") {
+    if (interaction.isChatInputCommand()) {
 
-      if (!interaction.member.roles.cache.has(NOUNCIL_ROLE_ID))
-        return interaction.reply({ content: "Only nouncilors can create polls.", ephemeral: true })
+      if (interaction.commandName === "create-poll") {
 
-      const title = interaction.options.getString("title")
-      const description = interaction.options.getString("description")
-      const closesAt = Date.now() + (4 * 24 * 60 * 60 * 1000)
+        const member = await interaction.guild.members.fetch(interaction.user.id)
 
-      const poll = {
-        type: "custom",
-        title,
-        description,
-        votes: {},
-        closesAt,
-        closed: false,
-        channelId: interaction.channelId
+        if (!member.roles.cache.has(NOUNCIL_ROLE_ID)) {
+          return interaction.reply({
+            content: "Only nouncilors can create polls.",
+            ephemeral: true
+          })
+        }
+
+        const title = interaction.options.getString("title")
+        const description = interaction.options.getString("description")
+        const closesAt = Date.now() + (4 * 24 * 60 * 60 * 1000)
+
+        const poll = {
+          type: "custom",
+          title,
+          description,
+          votes: {},
+          closesAt,
+          closed: false,
+          channelId: interaction.channelId
+        }
+
+        const message = await interaction.reply({
+          content: `<@&${NOUNCIL_ROLE_ID}>`,
+          embeds: [createEmbed(poll)],
+          components: [createButtons()],
+          fetchReply: true
+        })
+
+        try {
+          const thread = await message.startThread({
+            name: `${title} — Discussion`,
+            autoArchiveDuration: 1440
+          })
+          poll.threadId = thread.id
+        } catch (err) {
+          console.log("Thread creation failed:", err)
+        }
+
+        const polls = loadPolls()
+        polls[message.id] = poll
+        savePolls(polls)
       }
+    }
 
-      const message = await interaction.reply({
-        content: `<@&${NOUNCIL_ROLE_ID}>`,
-        embeds: [createEmbed(poll)],
-        components: [createButtons()],
-        fetchReply: true
-      })
+    if (interaction.isButton()) {
 
-      const thread = await message.startThread({
-        name: `${title} — Discussion`,
-        autoArchiveDuration: 1440
-      })
-
-      poll.threadId = thread.id
-
+      const choice = interaction.customId.replace("vote_", "")
       const polls = loadPolls()
-      polls[message.id] = poll
+      const poll = polls[interaction.message.id]
+      if (!poll || poll.closed) return
+
+      const modal = new ModalBuilder()
+        .setCustomId(`comment_${choice}`)
+        .setTitle("Vote Reason (Optional)")
+
+      const input = new TextInputBuilder()
+        .setCustomId("vote_comment")
+        .setLabel("Reason for your vote")
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+
+      modal.addComponents(new ActionRowBuilder().addComponents(input))
+      await interaction.showModal(modal)
+    }
+
+    if (interaction.isModalSubmit()) {
+
+      const choice = interaction.customId.replace("comment_", "")
+      const polls = loadPolls()
+      const poll = polls[interaction.message.id]
+      if (!poll || poll.closed) return
+
+      const comment = interaction.fields.getTextInputValue("vote_comment")
+
+      poll.votes[interaction.user.id] = { choice, comment }
       savePolls(polls)
-    }
-  }
 
-  if (interaction.isButton()) {
+      await interaction.update({
+        embeds: [createEmbed(poll)],
+        components: [createButtons()]
+      })
 
-    const choice = interaction.customId.replace("vote_", "")
-    const polls = loadPolls()
-    const poll = polls[interaction.message.id]
-    if (!poll || poll.closed) return
-
-    const modal = new ModalBuilder()
-      .setCustomId(`comment_${choice}`)
-      .setTitle("Vote Reason (Optional)")
-
-    const input = new TextInputBuilder()
-      .setCustomId("vote_comment")
-      .setLabel("Reason for your vote")
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(false)
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input))
-    await interaction.showModal(modal)
-  }
-
-  if (interaction.isModalSubmit()) {
-
-    const choice = interaction.customId.replace("comment_", "")
-    const polls = loadPolls()
-    const poll = polls[interaction.message.id]
-    if (!poll || poll.closed) return
-
-    const comment = interaction.fields.getTextInputValue("vote_comment")
-
-    poll.votes[interaction.user.id] = {
-      choice,
-      comment
+      if (poll.threadId) {
+        const thread = await client.channels.fetch(poll.threadId)
+        await thread.send(
+          `<@${interaction.user.id}> voted **${choice.toUpperCase()}**` +
+          (comment ? `\nReason: ${comment}` : "")
+        )
+      }
     }
 
-    savePolls(polls)
-
-    await interaction.update({
-      embeds: [createEmbed(poll)],
-      components: [createButtons()]
-    })
-
-    if (poll.threadId) {
-      const thread = await client.channels.fetch(poll.threadId)
-      await thread.send(
-        `<@${interaction.user.id}> voted **${choice.toUpperCase()}**` +
-        (comment ? `\nReason: ${comment}` : "")
-      )
-    }
+  } catch (err) {
+    console.log("Interaction error:", err)
   }
 })
 
