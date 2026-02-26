@@ -13,6 +13,7 @@ import {
 
 import fs from "fs"
 import dotenv from "dotenv"
+import http from "http"
 
 dotenv.config()
 
@@ -20,6 +21,17 @@ const TOKEN = process.env.DISCORD_TOKEN
 const CLIENT_ID = process.env.CLIENT_ID
 const GUILD_ID = process.env.GUILD_ID
 const NOUNCIL_ROLE_ID = process.env.NOUNCIL_ROLE_ID
+
+// ---- SMALL HTTP SERVER FOR RENDER FREE TIER ----
+const server = http.createServer((req, res) => {
+  res.writeHead(200)
+  res.end("Nouncil bot running")
+})
+
+server.listen(process.env.PORT || 3000, () => {
+  console.log("Web server active")
+})
+// -------------------------------------------------
 
 const client = new Client({
   intents: [
