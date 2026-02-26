@@ -21,7 +21,7 @@ import { ethers } from "ethers"
 
 dotenv.config()
 
-console.log("Nouncil Bot — Stable Build Active")
+console.log("Nouncil Bot — RPC Safe Build Active")
 
 const TOKEN = process.env.DISCORD_TOKEN
 const CLIENT_ID = process.env.CLIENT_ID
@@ -59,23 +59,6 @@ function savePolls(data) {
   fs.writeFileSync(POLL_FILE, JSON.stringify(data, null, 2))
 }
 
-const provider = new ethers.JsonRpcProvider(ETH_RPC_URL)
-const governor = new ethers.Contract(GOVERNOR_ADDRESS, GOVERNOR_ABI, provider)
-
-// ================= COMMAND =================
-const commands = [
-  new SlashCommandBuilder()
-    .setName("create-poll")
-    .setDescription("Create a custom 4-day poll")
-    .addStringOption(o =>
-      o.setName("title").setDescription("Poll title").setRequired(true))
-    .addStringOption(o =>
-      o.setName("description").setDescription("Poll description").setRequired(true))
-].map(c => c.toJSON())
-
-const rest = new REST({ version: "10" }).setToken(TOKEN)
-
-// ================= HELPERS =================
 function getVoteCounts(votes) {
   return {
     for: Object.values(votes).filter(v => v.choice === "for").length,
@@ -110,9 +93,19 @@ function createEmbed(poll) {
   return embed
 }
 
-// ================= PROPOSAL AUTO =================
+// ================= PROPOSAL AUTO (RPC SAFE) =================
 async function checkProposals() {
+
+  if (!ETH_RPC_URL) {
+    console.log("No ETH_RPC_URL set — skipping proposal automation")
+    return
+  }
+
   try {
+
+    const provider = new ethers.JsonRpcProvider(ETH_RPC_URL)
+    const governor = new ethers.Contract(GOVERNOR_ADDRESS, GOVERNOR_ABI, provider)
+
     const proposalCount = Number(await governor.proposalCount())
     const polls = loadPolls()
     const start = Math.max(1, proposalCount - 10)
@@ -183,7 +176,7 @@ async function checkProposals() {
     }
 
   } catch (err) {
-    console.log("Proposal check error:", err)
+    console.log("RPC failed — skipping proposal automation:", err.message)
   }
 }
 
@@ -213,10 +206,22 @@ setInterval(async () => {
 
 // ================= READY =================
 client.once(Events.ClientReady, async () => {
+
+  const rest = new REST({ version: "10" }).setToken(TOKEN)
+
   await rest.put(
     Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-    { body: commands }
+    {
+      body: [
+        new SlashCommandBuilder()
+          .setName("create-poll")
+          .setDescription("Create a custom 4-day poll")
+          .addStringOption(o => o.setName("title").setDescription("Poll title").setRequired(true))
+          .addStringOption(o => o.setName("description").setDescription("Poll description").setRequired(true))
+      ]
+    }
   )
+
   console.log(`Logged in as ${client.user.tag}`)
   checkProposals()
 })
