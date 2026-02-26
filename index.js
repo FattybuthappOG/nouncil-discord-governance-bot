@@ -21,7 +21,6 @@ import { ethers } from "ethers"
 
 dotenv.config()
 
-// ================= ENV =================
 const TOKEN = process.env.DISCORD_TOKEN
 const CLIENT_ID = process.env.CLIENT_ID
 const GUILD_ID = process.env.GUILD_ID
@@ -37,21 +36,16 @@ const GOVERNOR_ABI = [
   "function proposals(uint256) view returns (uint256 id,address proposer,uint256 eta,uint256 startBlock,uint256 endBlock,uint256 forVotes,uint256 againstVotes,uint256 abstainVotes,bool canceled,bool executed)"
 ]
 
-// ================= RENDER PORT =================
+// Render port
 http.createServer((req, res) => {
   res.writeHead(200)
-  res.end("Nouncil bot running")
+  res.end("Bot running")
 }).listen(process.env.PORT || 3000)
 
-// ================= DISCORD =================
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
-  ]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 })
 
-// ================= STORAGE =================
 const POLL_FILE = "./polls.json"
 if (!fs.existsSync(POLL_FILE)) fs.writeFileSync(POLL_FILE, JSON.stringify({}))
 
@@ -63,9 +57,26 @@ function savePolls(data) {
   fs.writeFileSync(POLL_FILE, JSON.stringify(data, null, 2))
 }
 
-// ================= ETHERS =================
 const provider = new ethers.JsonRpcProvider(ETH_RPC_URL)
 const governor = new ethers.Contract(GOVERNOR_ADDRESS, GOVERNOR_ABI, provider)
+
+// ================= SLASH COMMANDS =================
+const commands = [
+  new SlashCommandBuilder()
+    .setName("create-poll")
+    .setDescription("Create a custom 4-day poll")
+    .addStringOption(o =>
+      o.setName("title").setDescription("Poll title").setRequired(true))
+    .addStringOption(o =>
+      o.setName("description").setDescription("Poll description").setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName("participation")
+    .setDescription("Show participation rate for nouncilors")
+
+].map(c => c.toJSON())
+
+const rest = new REST({ version: "10" }).setToken(TOKEN)
 
 // ================= HELPERS =================
 function getVoteCounts(votes) {
@@ -102,24 +113,30 @@ function createEmbed(poll) {
   return embed
 }
 
-// ================= PROPOSAL CHECK =================
+// ================= PROPOSAL BACKFILL =================
 async function checkProposals() {
   const proposalCount = Number(await governor.proposalCount())
   const polls = loadPolls()
-  const currentBlock = await provider.getBlockNumber()
 
-  const start = Math.max(1, proposalCount - 20)
+  const start = Math.max(1, proposalCount - 100)
 
   for (let i = start; i <= proposalCount; i++) {
 
-    const alreadyExists = Object.values(polls).some(
+    const exists = Object.values(polls).some(
       p => p.type === "proposal" && p.proposalId === i
     )
-    if (alreadyExists) continue
+    if (exists) continue
 
     const proposal = await governor.proposals(i)
-    if (currentBlock < proposal.startBlock) continue
-    if (currentBlock > proposal.endBlock) continue
+
+    if (proposal.canceled || proposal.executed) continue
+
+    const endBlock = Number(proposal.endBlock)
+    const block = await provider.getBlock(endBlock)
+    if (!block) continue
+
+    const endTimestamp = block.timestamp * 1000
+    if (Date.now() > endTimestamp) continue
 
     const filter = governor.filters.ProposalCreated(i)
     const events = await governor.queryFilter(filter)
@@ -131,9 +148,6 @@ async function checkProposals() {
       ? firstLine.replace(/^#+\s*/, "")
       : firstLine.substring(0, 100)
 
-    const endBlock = Number(proposal.endBlock)
-    const block = await provider.getBlock(endBlock)
-    const endTimestamp = block.timestamp * 1000
     const closesAt = endTimestamp - (24 * 60 * 60 * 1000)
 
     const channel = await client.channels.fetch(PROPOSAL_CHANNEL_ID)
@@ -166,6 +180,8 @@ async function checkProposals() {
     }
 
     savePolls(polls)
+
+    console.log(`Created poll for proposal ${i}`)
   }
 }
 
@@ -179,7 +195,6 @@ setInterval(async () => {
   for (const id in polls) {
     const poll = polls[id]
     if (!poll.closed && now >= poll.closesAt) {
-
       poll.closed = true
       savePolls(polls)
 
@@ -194,15 +209,7 @@ setInterval(async () => {
   }
 }, 60000)
 
-// ================= PARTICIPATION COMMAND =================
-const commands = [
-  new SlashCommandBuilder()
-    .setName("participation")
-    .setDescription("Show participation rate for nouncilors")
-].map(c => c.toJSON())
-
-const rest = new REST({ version: "10" }).setToken(TOKEN)
-
+// ================= EVENTS =================
 client.once(Events.ClientReady, async () => {
   await rest.put(
     Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
@@ -216,10 +223,38 @@ client.on(Events.InteractionCreate, async interaction => {
 
   if (interaction.isChatInputCommand()) {
 
-    if (interaction.commandName === "participation") {
+    if (interaction.commandName === "create-poll") {
 
       if (!interaction.member.roles.cache.has(NOUNCIL_ROLE_ID))
-        return interaction.reply({ content: "Only nouncilors can view this.", ephemeral: true })
+        return interaction.reply({ content: "Only nouncilors can create polls.", ephemeral: true })
+
+      const title = interaction.options.getString("title")
+      const description = interaction.options.getString("description")
+      const closesAt = Date.now() + (4 * 24 * 60 * 60 * 1000)
+
+      const poll = {
+        type: "custom",
+        title,
+        description,
+        votes: {},
+        closesAt,
+        closed: false,
+        channelId: interaction.channelId
+      }
+
+      const message = await interaction.reply({
+        content: `<@&${NOUNCIL_ROLE_ID}>`,
+        embeds: [createEmbed(poll)],
+        components: [createButtons()],
+        fetchReply: true
+      })
+
+      const polls = loadPolls()
+      polls[message.id] = poll
+      savePolls(polls)
+    }
+
+    if (interaction.commandName === "participation") {
 
       const polls = loadPolls()
       const proposalPolls = Object.values(polls).filter(
@@ -239,9 +274,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
       nouncilors.forEach(member => {
         let voted = 0
-
-        proposalPolls.forEach(poll => {
-          if (poll.votes[member.id]) voted++
+        proposalPolls.forEach(p => {
+          if (p.votes[member.id]) voted++
         })
 
         const percent = totalEligible > 0
@@ -262,34 +296,11 @@ client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isButton()) {
 
     const choice = interaction.customId.replace("vote_", "")
-
-    const modal = new ModalBuilder()
-      .setCustomId(`comment_${choice}`)
-      .setTitle("Optional Vote Comment")
-
-    const input = new TextInputBuilder()
-      .setCustomId("vote_comment")
-      .setLabel("Reason (optional)")
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(false)
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input))
-    await interaction.showModal(modal)
-  }
-
-  if (interaction.isModalSubmit()) {
-
-    const choice = interaction.customId.replace("comment_", "")
     const polls = loadPolls()
     const poll = polls[interaction.message.id]
     if (!poll || poll.closed) return
 
-    poll.votes[interaction.user.id] = {
-      choice,
-      comment: interaction.fields.getTextInputValue("vote_comment"),
-      timestamp: Date.now()
-    }
-
+    poll.votes[interaction.user.id] = { choice }
     savePolls(polls)
 
     await interaction.update({
