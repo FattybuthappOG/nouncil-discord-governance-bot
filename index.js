@@ -45,7 +45,10 @@ http.createServer((req, res) => {
 
 // ================= DISCORD =================
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
+  ]
 })
 
 // ================= STORAGE =================
@@ -99,14 +102,12 @@ function createEmbed(poll) {
   return embed
 }
 
-// ================= BACKFILL PROPOSAL CHECK =================
+// ================= PROPOSAL CHECK =================
 async function checkProposals() {
-
   const proposalCount = Number(await governor.proposalCount())
   const polls = loadPolls()
   const currentBlock = await provider.getBlockNumber()
 
-  // Look back 20 proposals for safety
   const start = Math.max(1, proposalCount - 20)
 
   for (let i = start; i <= proposalCount; i++) {
@@ -117,7 +118,6 @@ async function checkProposals() {
     if (alreadyExists) continue
 
     const proposal = await governor.proposals(i)
-
     if (currentBlock < proposal.startBlock) continue
     if (currentBlock > proposal.endBlock) continue
 
@@ -154,11 +154,6 @@ async function checkProposals() {
       components: [createButtons()]
     })
 
-    const thread = await message.startThread({
-      name: `Prop ${i} — Nouncil Discussion`,
-      autoArchiveDuration: 1440
-    })
-
     polls[message.id] = {
       type: "proposal",
       proposalId: i,
@@ -167,15 +162,13 @@ async function checkProposals() {
       votes: {},
       closesAt,
       closed: false,
-      channelId: message.channelId,
-      threadId: thread.id
+      channelId: message.channelId
     }
 
     savePolls(polls)
   }
 }
 
-// Run hourly
 setInterval(checkProposals, 60 * 60 * 1000)
 
 // ================= AUTO CLOSE =================
@@ -202,7 +195,69 @@ setInterval(async () => {
 }, 60000)
 
 // ================= PARTICIPATION COMMAND =================
+const commands = [
+  new SlashCommandBuilder()
+    .setName("participation")
+    .setDescription("Show participation rate for nouncilors")
+].map(c => c.toJSON())
+
+const rest = new REST({ version: "10" }).setToken(TOKEN)
+
+client.once(Events.ClientReady, async () => {
+  await rest.put(
+    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+    { body: commands }
+  )
+  console.log(`Logged in as ${client.user.tag}`)
+  checkProposals()
+})
+
 client.on(Events.InteractionCreate, async interaction => {
+
+  if (interaction.isChatInputCommand()) {
+
+    if (interaction.commandName === "participation") {
+
+      if (!interaction.member.roles.cache.has(NOUNCIL_ROLE_ID))
+        return interaction.reply({ content: "Only nouncilors can view this.", ephemeral: true })
+
+      const polls = loadPolls()
+      const proposalPolls = Object.values(polls).filter(
+        p => p.type === "proposal" && p.closed
+      )
+
+      const totalEligible = proposalPolls.length
+
+      const guild = await client.guilds.fetch(GUILD_ID)
+      const members = await guild.members.fetch()
+
+      const nouncilors = members.filter(m =>
+        m.roles.cache.has(NOUNCIL_ROLE_ID)
+      )
+
+      let output = ""
+
+      nouncilors.forEach(member => {
+        let voted = 0
+
+        proposalPolls.forEach(poll => {
+          if (poll.votes[member.id]) voted++
+        })
+
+        const percent = totalEligible > 0
+          ? ((voted / totalEligible) * 100).toFixed(1)
+          : 0
+
+        output += `<@${member.id}> — ${voted}/${totalEligible} (${percent}%)\n`
+      })
+
+      const embed = new EmbedBuilder()
+        .setTitle("Nouncil Participation")
+        .setDescription(output || "No closed proposal polls yet.")
+
+      await interaction.reply({ embeds: [embed] })
+    }
+  }
 
   if (interaction.isButton()) {
 
@@ -219,7 +274,6 @@ client.on(Events.InteractionCreate, async interaction => {
       .setRequired(false)
 
     modal.addComponents(new ActionRowBuilder().addComponents(input))
-
     await interaction.showModal(modal)
   }
 
@@ -242,23 +296,7 @@ client.on(Events.InteractionCreate, async interaction => {
       embeds: [createEmbed(poll)],
       components: [createButtons()]
     })
-
-    // Log inside thread
-    if (poll.threadId) {
-      const thread = await client.channels.fetch(poll.threadId)
-      await thread.send(
-        `<@${interaction.user.id}> voted **${choice.toUpperCase()}**` +
-        (interaction.fields.getTextInputValue("vote_comment")
-          ? `\nComment: ${interaction.fields.getTextInputValue("vote_comment")}`
-          : "")
-      )
-    }
   }
-})
-
-client.once(Events.ClientReady, () => {
-  console.log(`Logged in as ${client.user.tag}`)
-  checkProposals()
 })
 
 client.login(TOKEN)
