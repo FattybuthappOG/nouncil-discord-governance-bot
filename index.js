@@ -99,12 +99,17 @@ function createEmbed(poll) {
   return embed
 }
 
-// ================= PROPOSAL CHECK (EVERY HOUR) =================
+// ================= BACKFILL PROPOSAL CHECK =================
 async function checkProposals() {
-  const proposalCount = await governor.proposalCount()
-  const polls = loadPolls()
 
-  for (let i = 1; i <= proposalCount; i++) {
+  const proposalCount = Number(await governor.proposalCount())
+  const polls = loadPolls()
+  const currentBlock = await provider.getBlockNumber()
+
+  // Look back 20 proposals for safety
+  const start = Math.max(1, proposalCount - 20)
+
+  for (let i = start; i <= proposalCount; i++) {
 
     const alreadyExists = Object.values(polls).some(
       p => p.type === "proposal" && p.proposalId === i
@@ -112,18 +117,19 @@ async function checkProposals() {
     if (alreadyExists) continue
 
     const proposal = await governor.proposals(i)
-    const currentBlock = await provider.getBlockNumber()
 
     if (currentBlock < proposal.startBlock) continue
     if (currentBlock > proposal.endBlock) continue
 
     const filter = governor.filters.ProposalCreated(i)
     const events = await governor.queryFilter(filter)
-
     if (!events.length) continue
 
-    const descriptionRaw = events[0].args.description
-    const titleLine = descriptionRaw.split("\n")[0].replace("# ", "")
+    const rawDesc = events[0].args.description
+    const firstLine = rawDesc.split("\n")[0].trim()
+    const titleParsed = firstLine.startsWith("#")
+      ? firstLine.replace(/^#+\s*/, "")
+      : firstLine.substring(0, 100)
 
     const endBlock = Number(proposal.endBlock)
     const block = await provider.getBlock(endBlock)
@@ -133,7 +139,7 @@ async function checkProposals() {
     const channel = await client.channels.fetch(PROPOSAL_CHANNEL_ID)
 
     const embed = new EmbedBuilder()
-      .setTitle(`Prop ${i}: ${titleLine}`)
+      .setTitle(`Prop ${i}: ${titleParsed}`)
       .setDescription(`https://nouncil.club/proposal/${i}`)
       .setFooter({ text: `Closes: ${new Date(closesAt).toUTCString()}` })
       .addFields(
@@ -148,21 +154,28 @@ async function checkProposals() {
       components: [createButtons()]
     })
 
+    const thread = await message.startThread({
+      name: `Prop ${i} — Nouncil Discussion`,
+      autoArchiveDuration: 1440
+    })
+
     polls[message.id] = {
       type: "proposal",
       proposalId: i,
-      title: `Prop ${i}: ${titleLine}`,
+      title: `Prop ${i}: ${titleParsed}`,
       description: `https://nouncil.club/proposal/${i}`,
       votes: {},
       closesAt,
       closed: false,
-      channelId: message.channelId
+      channelId: message.channelId,
+      threadId: thread.id
     }
 
     savePolls(polls)
   }
 }
 
+// Run hourly
 setInterval(checkProposals, 60 * 60 * 1000)
 
 // ================= AUTO CLOSE =================
@@ -184,53 +197,17 @@ setInterval(async () => {
         embeds: [createEmbed(poll)],
         components: [createButtons(true)]
       })
-
-      generateMarkdownExport(poll)
     }
   }
 }, 60000)
 
-// ================= MARKDOWN EXPORT =================
-function generateMarkdownExport(poll) {
-  const counts = getVoteCounts(poll.votes)
-
-  let winner = "ABSTAIN"
-  if (counts.for > counts.against && counts.for > counts.abstain) winner = "FOR"
-  if (counts.against > counts.for && counts.against > counts.abstain) winner = "AGAINST"
-
-  let commentsSection = ""
-  for (const userId in poll.votes) {
-    const v = poll.votes[userId]
-    commentsSection += `- ${userId} — ${v.choice}${v.comment ? ` — ${v.comment}` : ""}\n`
-  }
-
-  const md = `
-# Nouncil Signal Vote
-
-${poll.title}
-
-Final Results
-
-For: ${counts.for}
-Against: ${counts.against}
-Abstain: ${counts.abstain}
-
-Winning Option: ${winner}
-
-## Vote Breakdown
-
-${commentsSection}
-`
-
-  fs.writeFileSync(`export-${poll.proposalId || Date.now()}.md`, md)
-}
-
-// ================= MODAL + VOTING =================
+// ================= PARTICIPATION COMMAND =================
 client.on(Events.InteractionCreate, async interaction => {
 
   if (interaction.isButton()) {
 
     const choice = interaction.customId.replace("vote_", "")
+
     const modal = new ModalBuilder()
       .setCustomId(`comment_${choice}`)
       .setTitle("Optional Vote Comment")
@@ -255,7 +232,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
     poll.votes[interaction.user.id] = {
       choice,
-      comment: interaction.fields.getTextInputValue("vote_comment")
+      comment: interaction.fields.getTextInputValue("vote_comment"),
+      timestamp: Date.now()
     }
 
     savePolls(polls)
@@ -264,11 +242,23 @@ client.on(Events.InteractionCreate, async interaction => {
       embeds: [createEmbed(poll)],
       components: [createButtons()]
     })
+
+    // Log inside thread
+    if (poll.threadId) {
+      const thread = await client.channels.fetch(poll.threadId)
+      await thread.send(
+        `<@${interaction.user.id}> voted **${choice.toUpperCase()}**` +
+        (interaction.fields.getTextInputValue("vote_comment")
+          ? `\nComment: ${interaction.fields.getTextInputValue("vote_comment")}`
+          : "")
+      )
+    }
   }
 })
 
 client.once(Events.ClientReady, () => {
   console.log(`Logged in as ${client.user.tag}`)
+  checkProposals()
 })
 
 client.login(TOKEN)
