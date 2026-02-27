@@ -218,3 +218,10 @@ client.login(TOKEN).then(() => {
 }).catch(err => {
   console.error("Login failed:", err)
 })
+client.login(TOKEN)
+  .then(() => {
+    console.log("LOGIN SUCCESS")
+  })
+  .catch(err => {
+    console.error("LOGIN FAILED:", err)
+  })
