@@ -16,24 +16,15 @@ import {
 
 import fs from "fs"
 import dotenv from "dotenv"
-import http from "http"
-import { ethers } from "ethers"
 
 dotenv.config()
 
-console.log("Nouncil Bot — RPC Safe Build Active")
+console.log("Nouncil Bot Minimal Build Starting")
 
 const TOKEN = process.env.DISCORD_TOKEN
 const CLIENT_ID = process.env.CLIENT_ID
 const GUILD_ID = process.env.GUILD_ID
 const NOUNCIL_ROLE_ID = process.env.NOUNCIL_ROLE_ID
-const ETH_RPC_URL = process.env.ETH_RPC_URL
-const PROPOSAL_CHANNEL_ID = process.env.PROPOSAL_CHANNEL_ID
-
-http.createServer((req, res) => {
-  res.writeHead(200)
-  res.end("Bot running")
-}).listen(process.env.PORT || 3000)
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
@@ -82,7 +73,7 @@ function createEmbed(poll) {
 
 client.once(Events.ClientReady, async () => {
 
-  console.log("BOT USER ID:", client.user.id)
+  console.log("Logged in as", client.user.tag)
 
   const rest = new REST({ version: "10" }).setToken(TOKEN)
 
@@ -100,29 +91,7 @@ client.once(Events.ClientReady, async () => {
       ]
     }
   )
-
-  console.log(`Logged in as ${client.user.tag}`)
 })
-
-/* ================= DEBUG INTERACTION LOGGER ================= */
-
-client.on(Events.InteractionCreate, async (interaction) => {
-  console.log("INTERACTION RECEIVED:", interaction.type)
-
-  if (interaction.isChatInputCommand()) {
-    console.log("COMMAND NAME:", interaction.commandName)
-  }
-
-  if (interaction.isButton()) {
-    console.log("BUTTON CLICK:", interaction.customId)
-  }
-
-  if (interaction.isModalSubmit()) {
-    console.log("MODAL SUBMIT:", interaction.customId)
-  }
-})
-
-/* ================= MAIN HANDLER ================= */
 
 client.on(Events.InteractionCreate, async interaction => {
 
@@ -137,9 +106,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const member = await interaction.guild.members.fetch(interaction.user.id)
 
         if (!member.roles.cache.has(NOUNCIL_ROLE_ID)) {
-          return interaction.editReply({
-            content: "Only nouncilors can create polls."
-          })
+          return interaction.editReply("Only nouncilors can create polls.")
         }
 
         const title = interaction.options.getString("title")
@@ -147,7 +114,6 @@ client.on(Events.InteractionCreate, async interaction => {
         const closesAt = Date.now() + (4 * 24 * 60 * 60 * 1000)
 
         const poll = {
-          type: "custom",
           title,
           description,
           votes: {},
@@ -163,15 +129,12 @@ client.on(Events.InteractionCreate, async interaction => {
           components: [createButtons()]
         })
 
-        try {
-          const thread = await message.startThread({
-            name: `${title} — Discussion`,
-            autoArchiveDuration: 1440
-          })
-          poll.threadId = thread.id
-        } catch (err) {
-          console.log("Thread creation failed:", err)
-        }
+        const thread = await message.startThread({
+          name: `${title} — Discussion`,
+          autoArchiveDuration: 1440
+        })
+
+        poll.threadId = thread.id
 
         const polls = loadPolls()
         polls[message.id] = poll
@@ -217,17 +180,15 @@ client.on(Events.InteractionCreate, async interaction => {
         components: [createButtons()]
       })
 
-      if (poll.threadId) {
-        const thread = await client.channels.fetch(poll.threadId)
-        await thread.send(
-          `<@${interaction.user.id}> voted **${choice.toUpperCase()}**` +
-          (comment ? `\nReason: ${comment}` : "")
-        )
-      }
+      const thread = await client.channels.fetch(poll.threadId)
+      await thread.send(
+        `<@${interaction.user.id}> voted **${choice.toUpperCase()}**` +
+        (comment ? `\nReason: ${comment}` : "")
+      )
     }
 
   } catch (err) {
-    console.log("Interaction error:", err)
+    console.error("Interaction error:", err)
   }
 })
 
