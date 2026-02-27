@@ -1,36 +1,31 @@
 import {
   Client,
   GatewayIntentBits,
-  EmbedBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  Events,
-  SlashCommandBuilder,
-  REST,
-  Routes,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle
+  Events
 } from "discord.js"
 
-import fs from "fs"
 import dotenv from "dotenv"
 import http from "http"
 
 dotenv.config()
 
-console.log("Nouncil Bot Booting...")
+console.log("BOOT START")
+
+/* ================= ENV ================= */
 
 const TOKEN = process.env.DISCORD_TOKEN
-const CLIENT_ID = process.env.CLIENT_ID
-const GUILD_ID = process.env.GUILD_ID
-const NOUNCIL_ROLE_ID = process.env.NOUNCIL_ROLE_ID
 
 if (!TOKEN) {
-  console.error("❌ DISCORD_TOKEN missing")
+  console.error("❌ DISCORD TOKEN MISSING")
   process.exit(1)
 }
+
+/* ================= KEEP RENDER ALIVE FIRST ================= */
+
+http.createServer((req, res) => {
+  res.writeHead(200)
+  res.end("alive")
+}).listen(process.env.PORT || 3000)
 
 /* ================= DISCORD CLIENT ================= */
 
@@ -38,147 +33,32 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 })
 
-/* ================= STORAGE ================= */
+/* ================= READY EVENT ================= */
 
-const POLL_FILE = "./polls.json"
-if (!fs.existsSync(POLL_FILE)) fs.writeFileSync(POLL_FILE, JSON.stringify({}))
-
-function loadPolls() {
-  return JSON.parse(fs.readFileSync(POLL_FILE))
-}
-
-function savePolls(data) {
-  fs.writeFileSync(POLL_FILE, JSON.stringify(data, null, 2))
-}
-
-function getVoteCounts(votes) {
-  return {
-    for: Object.values(votes).filter(v => v.choice === "for").length,
-    against: Object.values(votes).filter(v => v.choice === "against").length,
-    abstain: Object.values(votes).filter(v => v.choice === "abstain").length
-  }
-}
-
-function createButtons(disabled = false) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("vote_for").setLabel("For").setStyle(ButtonStyle.Success).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("vote_against").setLabel("Against").setStyle(ButtonStyle.Danger).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("vote_abstain").setLabel("Abstain").setStyle(ButtonStyle.Secondary).setDisabled(disabled)
-  )
-}
-
-function createEmbed(poll) {
-  const counts = getVoteCounts(poll.votes)
-
-  return new EmbedBuilder()
-    .setTitle(poll.title)
-    .setDescription(poll.description)
-    .addFields(
-      { name: "For", value: String(counts.for), inline: true },
-      { name: "Against", value: String(counts.against), inline: true },
-      { name: "Abstain", value: String(counts.abstain), inline: true }
-    )
-    .setFooter({ text: `Closes: ${new Date(poll.closesAt).toUTCString()}` })
-}
-
-/* ================= READY ================= */
-
-client.once(Events.ClientReady, async () => {
-  console.log("✅ Logged in as", client.user.tag)
-
-  const rest = new REST({ version: "10" }).setToken(TOKEN)
-
-  await rest.put(
-    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-    {
-      body: [
-        new SlashCommandBuilder()
-          .setName("create-poll")
-          .setDescription("Create a custom 4-day poll")
-          .addStringOption(o =>
-            o.setName("title").setDescription("Poll title").setRequired(true))
-          .addStringOption(o =>
-            o.setName("description").setDescription("Poll description").setRequired(true))
-      ]
-    }
-  )
-
-  console.log("✅ Slash commands registered")
+client.once(Events.ClientReady, () => {
+  console.log("✅ CONNECTED:", client.user.tag)
 })
 
-client.on(Events.InteractionCreate, async interaction => {
+/* ================= ERROR LOGGING ================= */
 
-  try {
-
-    if (interaction.isChatInputCommand()) {
-
-      if (interaction.commandName === "create-poll") {
-
-        await interaction.deferReply({ ephemeral: true })
-
-        if (!interaction.member.roles.cache.has(NOUNCIL_ROLE_ID)) {
-          return interaction.editReply("Only nouncilors can create polls.")
-        }
-
-        const title = interaction.options.getString("title")
-        const description = interaction.options.getString("description")
-        const closesAt = Date.now() + (4 * 24 * 60 * 60 * 1000)
-
-        const poll = {
-          title,
-          description,
-          votes: {},
-          closesAt,
-          closed: false
-        }
-
-        const message = await interaction.channel.send({
-          content: `<@&${NOUNCIL_ROLE_ID}>`,
-          allowedMentions: { roles: [NOUNCIL_ROLE_ID] },
-          embeds: [createEmbed(poll)],
-          components: [createButtons()]
-        })
-
-        const thread = await message.startThread({
-          name: `${title} — Discussion`,
-          autoArchiveDuration: 1440
-        })
-
-        poll.threadId = thread.id
-
-        const polls = loadPolls()
-        polls[message.id] = poll
-        savePolls(polls)
-
-        await interaction.editReply("Poll created successfully.")
-      }
-    }
-
-  } catch (err) {
-    console.error("Interaction error:", err)
-  }
+client.on("error", err => {
+  console.error("Discord client error:", err)
 })
-
-/* ================= STARTUP ================= */
-
-async function startBot() {
-  try {
-    await client.login(TOKEN)
-    console.log("✅ LOGIN SUCCESS")
-  } catch (err) {
-    console.error("❌ LOGIN FAILED:", err)
-  }
-}
-
-startBot()
-
-/* ================= KEEP RENDER ALIVE ================= */
-
-http.createServer((req, res) => {
-  res.writeHead(200)
-  res.end("Bot alive")
-}).listen(process.env.PORT || 3000)
 
 process.on("unhandledRejection", err => {
-  console.error("Unhandled Rejection:", err)
+  console.error("Unhandled rejection:", err)
 })
+
+process.on("uncaughtException", err => {
+  console.error("Uncaught exception:", err)
+})
+
+/* ================= LOGIN ================= */
+
+client.login(TOKEN)
+  .then(() => {
+    console.log("✅ LOGIN SUCCESS")
+  })
+  .catch(err => {
+    console.error("❌ LOGIN FAILED:", err)
+  })
