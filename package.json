@@ -1,10 +1,11 @@
 {
-  "name": "nouncil-discord-bot",
-  "version": "2.0.0",
+  "name": "nouncil-discord-governance-bot",
+  "version": "1.0.0",
+  "description": "Nouncil Discord Governance Bot",
   "type": "module",
   "main": "index.js",
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   },
   "scripts": {
     "start": "node index.js"
@@ -12,6 +13,6 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5",
-    "ethers": "^6.10.0"
+    "ethers": "^6.16.0"
   }
 }
