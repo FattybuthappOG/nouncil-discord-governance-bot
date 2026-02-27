@@ -20,7 +20,7 @@ import http from "http"
 
 dotenv.config()
 
-console.log("Nouncil Bot Minimal WebService Build Starting")
+console.log("Nouncil Bot Stable WebService Build Starting")
 
 /* ================= KEEP RENDER ALIVE ================= */
 
@@ -36,10 +36,15 @@ const CLIENT_ID = process.env.CLIENT_ID
 const GUILD_ID = process.env.GUILD_ID
 const NOUNCIL_ROLE_ID = process.env.NOUNCIL_ROLE_ID
 
+if (!TOKEN) {
+  console.error("DISCORD_TOKEN is missing")
+  process.exit(1)
+}
+
 /* ================= DISCORD CLIENT ================= */
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+  intents: [GatewayIntentBits.Guilds]
 })
 
 /* ================= STORAGE ================= */
@@ -109,6 +114,8 @@ client.once(Events.ClientReady, async () => {
       ]
     }
   )
+
+  console.log("Slash commands registered")
 })
 
 /* ================= INTERACTIONS ================= */
@@ -121,11 +128,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (interaction.commandName === "create-poll") {
 
-        await interaction.deferReply()
+        await interaction.deferReply({ ephemeral: true })
 
-        const member = await interaction.guild.members.fetch(interaction.user.id)
-
-        if (!member.roles.cache.has(NOUNCIL_ROLE_ID)) {
+        // ROLE CHECK WITHOUT GuildMembers intent
+        if (!interaction.member.roles.cache.has(NOUNCIL_ROLE_ID)) {
           return interaction.editReply("Only nouncilors can create polls.")
         }
 
@@ -142,7 +148,7 @@ client.on(Events.InteractionCreate, async interaction => {
           channelId: interaction.channelId
         }
 
-        const message = await interaction.editReply({
+        const message = await interaction.channel.send({
           content: `<@&${NOUNCIL_ROLE_ID}>`,
           allowedMentions: { roles: [NOUNCIL_ROLE_ID] },
           embeds: [createEmbed(poll)],
@@ -159,6 +165,8 @@ client.on(Events.InteractionCreate, async interaction => {
         const polls = loadPolls()
         polls[message.id] = poll
         savePolls(polls)
+
+        await interaction.editReply("Poll created successfully.")
       }
     }
 
@@ -201,6 +209,7 @@ client.on(Events.InteractionCreate, async interaction => {
       })
 
       const thread = await client.channels.fetch(poll.threadId)
+
       await thread.send(
         `<@${interaction.user.id}> voted **${choice.toUpperCase()}**` +
         (comment ? `\nReason: ${comment}` : "")
@@ -212,16 +221,8 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 })
 
+/* ================= LOGIN (ONLY ONCE) ================= */
+
 client.login(TOKEN)
-client.login(TOKEN).then(() => {
-  console.log("Login success promise resolved")
-}).catch(err => {
-  console.error("Login failed:", err)
-})
-client.login(TOKEN)
-  .then(() => {
-    console.log("LOGIN SUCCESS")
-  })
-  .catch(err => {
-    console.error("LOGIN FAILED:", err)
-  })
+  .then(() => console.log("LOGIN SUCCESS"))
+  .catch(err => console.error("LOGIN FAILED:", err))
