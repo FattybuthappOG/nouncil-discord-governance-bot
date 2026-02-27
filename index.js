@@ -16,19 +16,33 @@ import {
 
 import fs from "fs"
 import dotenv from "dotenv"
+import http from "http"
 
 dotenv.config()
 
-console.log("Nouncil Bot Minimal Build Starting")
+console.log("Nouncil Bot Minimal WebService Build Starting")
+
+/* ================= KEEP RENDER ALIVE ================= */
+
+http.createServer((req, res) => {
+  res.writeHead(200)
+  res.end("Bot is running")
+}).listen(process.env.PORT || 3000)
+
+/* ================= ENV ================= */
 
 const TOKEN = process.env.DISCORD_TOKEN
 const CLIENT_ID = process.env.CLIENT_ID
 const GUILD_ID = process.env.GUILD_ID
 const NOUNCIL_ROLE_ID = process.env.NOUNCIL_ROLE_ID
 
+/* ================= DISCORD CLIENT ================= */
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 })
+
+/* ================= STORAGE ================= */
 
 const POLL_FILE = "./polls.json"
 if (!fs.existsSync(POLL_FILE)) fs.writeFileSync(POLL_FILE, JSON.stringify({}))
@@ -40,6 +54,8 @@ function loadPolls() {
 function savePolls(data) {
   fs.writeFileSync(POLL_FILE, JSON.stringify(data, null, 2))
 }
+
+/* ================= HELPERS ================= */
 
 function getVoteCounts(votes) {
   return {
@@ -71,6 +87,8 @@ function createEmbed(poll) {
     .setFooter({ text: `Closes: ${new Date(poll.closesAt).toUTCString()}` })
 }
 
+/* ================= READY ================= */
+
 client.once(Events.ClientReady, async () => {
 
   console.log("Logged in as", client.user.tag)
@@ -92,6 +110,8 @@ client.once(Events.ClientReady, async () => {
     }
   )
 })
+
+/* ================= INTERACTIONS ================= */
 
 client.on(Events.InteractionCreate, async interaction => {
 
