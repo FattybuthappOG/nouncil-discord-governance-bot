@@ -20,16 +20,7 @@ import http from "http"
 
 dotenv.config()
 
-console.log("Nouncil Bot Stable WebService Build Starting")
-
-/* ================= KEEP RENDER ALIVE ================= */
-
-http.createServer((req, res) => {
-  res.writeHead(200)
-  res.end("Bot is running")
-}).listen(process.env.PORT || 3000)
-
-/* ================= ENV ================= */
+console.log("Nouncil Bot Booting...")
 
 const TOKEN = process.env.DISCORD_TOKEN
 const CLIENT_ID = process.env.CLIENT_ID
@@ -37,7 +28,7 @@ const GUILD_ID = process.env.GUILD_ID
 const NOUNCIL_ROLE_ID = process.env.NOUNCIL_ROLE_ID
 
 if (!TOKEN) {
-  console.error("DISCORD_TOKEN is missing")
+  console.error("❌ DISCORD_TOKEN missing")
   process.exit(1)
 }
 
@@ -59,8 +50,6 @@ function loadPolls() {
 function savePolls(data) {
   fs.writeFileSync(POLL_FILE, JSON.stringify(data, null, 2))
 }
-
-/* ================= HELPERS ================= */
 
 function getVoteCounts(votes) {
   return {
@@ -95,8 +84,7 @@ function createEmbed(poll) {
 /* ================= READY ================= */
 
 client.once(Events.ClientReady, async () => {
-
-  console.log("Logged in as", client.user.tag)
+  console.log("✅ Logged in as", client.user.tag)
 
   const rest = new REST({ version: "10" }).setToken(TOKEN)
 
@@ -115,10 +103,8 @@ client.once(Events.ClientReady, async () => {
     }
   )
 
-  console.log("Slash commands registered")
+  console.log("✅ Slash commands registered")
 })
-
-/* ================= INTERACTIONS ================= */
 
 client.on(Events.InteractionCreate, async interaction => {
 
@@ -130,7 +116,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await interaction.deferReply({ ephemeral: true })
 
-        // ROLE CHECK WITHOUT GuildMembers intent
         if (!interaction.member.roles.cache.has(NOUNCIL_ROLE_ID)) {
           return interaction.editReply("Only nouncilors can create polls.")
         }
@@ -144,8 +129,7 @@ client.on(Events.InteractionCreate, async interaction => {
           description,
           votes: {},
           closesAt,
-          closed: false,
-          channelId: interaction.channelId
+          closed: false
         }
 
         const message = await interaction.channel.send({
@@ -170,59 +154,31 @@ client.on(Events.InteractionCreate, async interaction => {
       }
     }
 
-    if (interaction.isButton()) {
-
-      const choice = interaction.customId.replace("vote_", "")
-      const polls = loadPolls()
-      const poll = polls[interaction.message.id]
-      if (!poll || poll.closed) return
-
-      const modal = new ModalBuilder()
-        .setCustomId(`comment_${choice}`)
-        .setTitle("Vote Reason (Optional)")
-
-      const input = new TextInputBuilder()
-        .setCustomId("vote_comment")
-        .setLabel("Reason for your vote")
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(false)
-
-      modal.addComponents(new ActionRowBuilder().addComponents(input))
-      await interaction.showModal(modal)
-    }
-
-    if (interaction.isModalSubmit()) {
-
-      const choice = interaction.customId.replace("comment_", "")
-      const polls = loadPolls()
-      const poll = polls[interaction.message.id]
-      if (!poll || poll.closed) return
-
-      const comment = interaction.fields.getTextInputValue("vote_comment")
-
-      poll.votes[interaction.user.id] = { choice, comment }
-      savePolls(polls)
-
-      await interaction.update({
-        embeds: [createEmbed(poll)],
-        components: [createButtons()]
-      })
-
-      const thread = await client.channels.fetch(poll.threadId)
-
-      await thread.send(
-        `<@${interaction.user.id}> voted **${choice.toUpperCase()}**` +
-        (comment ? `\nReason: ${comment}` : "")
-      )
-    }
-
   } catch (err) {
     console.error("Interaction error:", err)
   }
 })
 
-/* ================= LOGIN (ONLY ONCE) ================= */
+/* ================= STARTUP ================= */
 
-client.login(TOKEN)
-  .then(() => console.log("LOGIN SUCCESS"))
-  .catch(err => console.error("LOGIN FAILED:", err))
+async function startBot() {
+  try {
+    await client.login(TOKEN)
+    console.log("✅ LOGIN SUCCESS")
+  } catch (err) {
+    console.error("❌ LOGIN FAILED:", err)
+  }
+}
+
+startBot()
+
+/* ================= KEEP RENDER ALIVE ================= */
+
+http.createServer((req, res) => {
+  res.writeHead(200)
+  res.end("Bot alive")
+}).listen(process.env.PORT || 3000)
+
+process.on("unhandledRejection", err => {
+  console.error("Unhandled Rejection:", err)
+})
