@@ -213,3 +213,8 @@ client.on(Events.InteractionCreate, async interaction => {
 })
 
 client.login(TOKEN)
+client.login(TOKEN).then(() => {
+  console.log("Login success promise resolved")
+}).catch(err => {
+  console.error("Login failed:", err)
+})
