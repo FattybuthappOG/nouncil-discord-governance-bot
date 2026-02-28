@@ -1,68 +1,32 @@
 import fs from "fs"
-import { ethers } from "ethers"
 
 const WEBHOOK = process.env.DISCORD_WEBHOOK
 
 /* ================= CONFIG ================= */
 
-const RPC =
-  "https://eth.llamarpc.com"
+const START_FROM = 946   // ✅ NEVER create before this
+const CHECK_COUNT = 10
 
-const GOVERNOR =
-  "0x6f3E6272A167e8AcCb32072d08E0957F9c79223d"
+/* ================= STORAGE ================= */
 
-/* Governor ABI minimal */
-const ABI = [
-  "function proposalCount() view returns (uint256)",
-  "function proposals(uint256) view returns (uint256 id,uint256 eta,uint256 startBlock,uint256 endBlock)"
-]
+const FILE = "seen_proposals.json"
 
-/* ================= LOAD STATE ================= */
-
-const seen = JSON.parse(
-  fs.readFileSync("./seen_proposals.json")
-)
-
-/* ================= RPC ================= */
-
-const provider = new ethers.JsonRpcProvider(RPC)
-const gov = new ethers.Contract(GOVERNOR, ABI, provider)
-
-/* ================= MAIN ================= */
-
-async function run() {
-
-  const latest = Number(await gov.proposalCount())
-
-  console.log("Latest proposal:", latest)
-
-  for (let id = latest; id > latest - 10; id--) {
-
-    if (seen.includes(id)) continue
-
-    console.log("Creating poll for", id)
-
-    await createDiscordPoll(id)
-
-    seen.push(id)
-  }
-
-  fs.writeFileSync(
-    "./seen_proposals.json",
-    JSON.stringify(seen, null, 2)
-  )
+if (!fs.existsSync(FILE)) {
+  fs.writeFileSync(FILE, JSON.stringify({ seen: [] }, null, 2))
 }
 
-/* ================= DISCORD ================= */
+const db = JSON.parse(fs.readFileSync(FILE))
 
-async function createDiscordPoll(id) {
+/* ================= HELPERS ================= */
 
-  const payload = {
+async function sendPoll(id) {
+
+  const body = {
     content: "@nouncilor",
     embeds: [{
       title: `Prop ${id}`,
-      description:
-        `https://nouncil.club/proposal/${id}`,
+      description: `https://nouncil.club/proposal/${id}`,
+      color: 5793266,
       fields: [
         { name: "For", value: "⬜", inline: true },
         { name: "Against", value: "⬜", inline: true },
@@ -73,13 +37,27 @@ async function createDiscordPoll(id) {
 
   await fetch(WEBHOOK, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
   })
+}
 
-  console.log("Poll sent:", id)
+/* ================= MAIN ================= */
+
+async function run() {
+
+  const latest = 946 + CHECK_COUNT   // temporary safe window
+
+  for (let id = latest; id >= START_FROM; id--) {
+
+    if (db.seen.includes(id)) continue
+
+    await sendPoll(id)
+
+    db.seen.push(id)
+  }
+
+  fs.writeFileSync(FILE, JSON.stringify(db, null, 2))
 }
 
 run()
