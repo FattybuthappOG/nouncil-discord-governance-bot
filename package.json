@@ -1,18 +1,8 @@
 {
-  "name": "nouncil-discord-governance-bot",
+  "name": "nouncil-automation",
   "version": "1.0.0",
-  "description": "Nouncil Discord Governance Bot",
   "type": "module",
-  "main": "index.js",
-  "engines": {
-    "node": ">=20"
-  },
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
-    "discord.js": "14.14.1",
-    "dotenv": "16.4.5",
-    "ethers": "6.16.0"
+    "ethers": "^6.16.0"
   }
 }
