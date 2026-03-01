@@ -1,153 +1,120 @@
-import fs from "fs"
+import Safe from '@safe-global/protocol-kit'
+import SafeApiKit from '@safe-global/api-kit'
 import { ethers } from "ethers"
+import fs from "fs"
 
-import SafeProtocolKit from "@safe-global/protocol-kit"
-import SafeApiKit from "@safe-global/api-kit"
-
-/* ================= CONFIG ================= */
-
-const RPC =
-  "https://eth-mainnet.g.alchemy.com/v2/demo"
-
-const SAFE_ADDRESS =
-  "0xYOUR_SAFE_ADDRESS"
-
-const GOVERNOR =
-  "0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03"
-
+// =============================
+// ENV
+// =============================
 const PRIVATE_KEY = process.env.SAFE_PRIVATE_KEY
+const RPC_URL = process.env.RPC_URL
 
-/* ================= STORAGE ================= */
+// ✅ REPLACE WITH YOUR SAFE
+const SAFE_ADDRESS = "PASTE_YOUR_SAFE_ADDRESS_HERE"
 
-const POLLS = JSON.parse(
-  fs.readFileSync("polls.json")
-)
-
-const QUEUED_FILE = "queued.json"
-
-if (!fs.existsSync(QUEUED_FILE)) {
-  fs.writeFileSync(
-    QUEUED_FILE,
-    JSON.stringify({ queued: [] }, null, 2)
-  )
+// =============================
+// GUARD
+// =============================
+if (!PRIVATE_KEY) {
+  throw new Error("SAFE_PRIVATE_KEY missing")
 }
 
-const queuedDB = JSON.parse(
-  fs.readFileSync(QUEUED_FILE)
-)
+if (!RPC_URL) {
+  throw new Error("RPC_URL missing")
+}
 
-/* ================= PROVIDER ================= */
+if (SAFE_ADDRESS.includes("PASTE")) {
+  throw new Error("SAFE_ADDRESS not configured")
+}
 
-const provider = new ethers.JsonRpcProvider(RPC)
-const signer = new ethers.Wallet(
-  PRIVATE_KEY,
-  provider
-)
+// =============================
+// PROVIDER
+// =============================
+const provider = new ethers.JsonRpcProvider(RPC_URL)
+const signer = new ethers.Wallet(PRIVATE_KEY, provider)
 
-/* ================= SAFE INIT ================= */
+// =============================
+// SAFE SDK
+// =============================
+const protocolKit = await Safe.init({
+  provider: RPC_URL,
+  signer: PRIVATE_KEY,
+  safeAddress: SAFE_ADDRESS
+})
 
-const protocolKit =
-  await SafeProtocolKit.default.init({
-    provider: RPC,
-    signer: PRIVATE_KEY,
-    safeAddress: SAFE_ADDRESS
-  })
-
-const apiKit = new SafeApiKit.default({
+const apiKit = new SafeApiKit({
   chainId: 1n
 })
 
-/* ================= HELPERS ================= */
-
-function buildMarkdown(prop) {
-  return `
-Prop ${prop.id}: ${prop.result} - Wins
-
-FOR - ${prop.for || 0} VOTES
-AGAINST - ${prop.against || 0} VOTES
-ABSTAINS - ${prop.abstain || 0} VOTES
-`
+// =============================
+// LOAD POLL RESULT
+// =============================
+if (!fs.existsSync("polls.json")) {
+  console.log("No polls.json found")
+  process.exit(0)
 }
 
-/* ================= MAIN ================= */
+const polls = JSON.parse(fs.readFileSync("polls.json"))
 
-for (const prop of POLLS.closed || []) {
-
-  if (queuedDB.queued.includes(prop.id)) {
-    console.log(
-      "Already queued:",
-      prop.id
-    )
-    continue
-  }
-
-  if (prop.result !== "FOR") {
-    console.log(
-      "Vote did not pass:",
-      prop.id
-    )
-    continue
-  }
-
-  console.log(
-    "Queueing Safe TX for Prop",
-    prop.id
-  )
-
-  /* ---------- SAFE TX ---------- */
-
-  const safeTransactionData = {
-    to: GOVERNOR,
-    data: "0x",
-    value: "0"
-  }
-
-  const safeTx =
-    await protocolKit.createTransaction({
-      transactions: [safeTransactionData]
-    })
-
-  const txHash =
-    await protocolKit.getTransactionHash(
-      safeTx
-    )
-
-  await protocolKit.signTransaction(
-    safeTx
-  )
-
-  await apiKit.proposeTransaction({
-    safeAddress: SAFE_ADDRESS,
-    safeTransactionData:
-      safeTx.data,
-    safeTxHash: txHash,
-    senderAddress:
-      await signer.getAddress(),
-    senderSignature:
-      safeTx.signatures.values()
-        .next().value.data
-  })
-
-  console.log(
-    "✅ Proposed to Safe:",
-    prop.id
-  )
-
-  /* ---------- MARKDOWN EXPORT ---------- */
-
-  fs.writeFileSync(
-    `result-${prop.id}.md`,
-    buildMarkdown(prop)
-  )
-
-  queuedDB.queued.push(prop.id)
-}
-
-/* ================= SAVE ================= */
-
-fs.writeFileSync(
-  QUEUED_FILE,
-  JSON.stringify(queuedDB, null, 2)
+const proposal = Object.values(polls).find(
+  p => p.passed && !p.safeQueued
 )
 
-console.log("Safe submit complete")
+if (!proposal) {
+  console.log("No passed proposal needing Safe queue")
+  process.exit(0)
+}
+
+// =============================
+// MARKDOWN REASON
+// =============================
+const markdownReason = `
+${proposal.title}
+
+FOR - ${proposal.forVotes}
+AGAINST - ${proposal.againstVotes}
+ABSTAIN - ${proposal.abstainVotes}
+
+${proposal.markdown || ""}
+`
+
+// =============================
+// SAFE TX
+// Example: empty tx (queue signal)
+// =============================
+const safeTransactionData = {
+  to: SAFE_ADDRESS,
+  value: "0",
+  data: "0x"
+}
+
+const safeTx = await protocolKit.createTransaction({
+  transactions: [safeTransactionData]
+})
+
+const safeTxHash =
+  await protocolKit.getTransactionHash(safeTx)
+
+const senderSignature =
+  await protocolKit.signHash(safeTxHash)
+
+await apiKit.proposeTransaction({
+  safeAddress: SAFE_ADDRESS,
+  safeTransactionData:
+    safeTx.data,
+  safeTxHash,
+  senderAddress:
+    await signer.getAddress(),
+  senderSignature:
+    senderSignature.data,
+  origin: markdownReason
+})
+
+proposal.safeQueued = true
+
+fs.writeFileSync(
+  "polls.json",
+  JSON.stringify(polls, null, 2)
+)
+
+console.log("✅ Safe transaction queued")
