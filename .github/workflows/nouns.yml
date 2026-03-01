@@ -5,30 +5,39 @@ on:
     - cron: "0 */6 * * *"
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   run:
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+    permissions:
+      contents: write
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - run: npm install
+      - name: Install dependencies
+        run: npm install
 
-      - run: node automation.js
+      - name: Run proposal automation
+        run: node automation.js
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
 
-      - name: Save seen proposals
+      - name: Submit Safe transaction
+        run: node safe-submit.js
+        env:
+          SAFE_PRIVATE_KEY: ${{ secrets.SAFE_PRIVATE_KEY }}
+
+      - name: Commit state
         run: |
           git config user.name github-actions
           git config user.email actions@github.com
-          git add seen_proposals.json
+          git add seen_proposals.json || true
           git commit -m "update seen proposals" || echo "no changes"
           git push
