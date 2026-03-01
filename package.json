@@ -1,8 +1,16 @@
 {
-  "name": "nouncil-automation",
-  "version": "1.0.0",
+  "name": "nouncil-governance-bot",
+  "version": "2.0.0",
   "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
-    "ethers": "^6.16.0"
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5"
   }
 }
