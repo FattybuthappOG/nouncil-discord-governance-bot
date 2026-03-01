@@ -1,41 +1,44 @@
-import Safe from '@safe-global/protocol-kit'
-import SafeApiKit from '@safe-global/api-kit'
+import Safe from "@safe-global/protocol-kit"
+import SafeApiKit from "@safe-global/api-kit"
 import { ethers } from "ethers"
 import fs from "fs"
 
-// =============================
-// ENV
-// =============================
+console.log("🚀 Safe submit starting")
+
+/* ================= ENV ================= */
+
 const PRIVATE_KEY = process.env.SAFE_PRIVATE_KEY
 const RPC_URL = process.env.RPC_URL
 
-// ✅ REPLACE WITH YOUR SAFE
-const SAFE_ADDRESS = "PASTE_YOUR_SAFE_ADDRESS_HERE"
+// ✅ PUT REAL SAFE HERE
+const SAFE_ADDRESS = "0xcC2688350d29623E2A0844Cc8885F9050F0f6Ed5"
 
-// =============================
-// GUARD
-// =============================
-if (!PRIVATE_KEY) {
-  throw new Error("SAFE_PRIVATE_KEY missing")
-}
+/* ================= VALIDATION ================= */
 
-if (!RPC_URL) {
-  throw new Error("RPC_URL missing")
-}
+if (!PRIVATE_KEY) throw Error("Missing SAFE_PRIVATE_KEY")
+if (!RPC_URL) throw Error("Missing RPC_URL")
 
-if (SAFE_ADDRESS.includes("PASTE")) {
-  throw new Error("SAFE_ADDRESS not configured")
-}
+if (!ethers.isAddress(SAFE_ADDRESS))
+  throw Error("INVALID SAFE ADDRESS")
 
-// =============================
-// PROVIDER
-// =============================
+/* ================= PROVIDER ================= */
+
 const provider = new ethers.JsonRpcProvider(RPC_URL)
 const signer = new ethers.Wallet(PRIVATE_KEY, provider)
 
-// =============================
-// SAFE SDK
-// =============================
+console.log("Signer:", await signer.getAddress())
+
+/* ================= SAFE EXISTS CHECK ================= */
+
+const code = await provider.getCode(SAFE_ADDRESS)
+
+if (code === "0x")
+  throw Error("SAFE NOT DEPLOYED OR WRONG NETWORK")
+
+console.log("✅ Safe contract detected")
+
+/* ================= SAFE INIT ================= */
+
 const protocolKit = await Safe.init({
   provider: RPC_URL,
   signer: PRIVATE_KEY,
@@ -46,11 +49,12 @@ const apiKit = new SafeApiKit({
   chainId: 1n
 })
 
-// =============================
-// LOAD POLL RESULT
-// =============================
+console.log("✅ Safe SDK initialized")
+
+/* ================= LOAD POLLS ================= */
+
 if (!fs.existsSync("polls.json")) {
-  console.log("No polls.json found")
+  console.log("No polls.json")
   process.exit(0)
 }
 
@@ -61,53 +65,41 @@ const proposal = Object.values(polls).find(
 )
 
 if (!proposal) {
-  console.log("No passed proposal needing Safe queue")
+  console.log("Nothing to queue")
   process.exit(0)
 }
 
-// =============================
-// MARKDOWN REASON
-// =============================
-const markdownReason = `
+/* ================= MARKDOWN ================= */
+
+const markdown = `
 ${proposal.title}
 
 FOR - ${proposal.forVotes}
 AGAINST - ${proposal.againstVotes}
 ABSTAIN - ${proposal.abstainVotes}
-
-${proposal.markdown || ""}
 `
 
-// =============================
-// SAFE TX
-// Example: empty tx (queue signal)
-// =============================
-const safeTransactionData = {
-  to: SAFE_ADDRESS,
-  value: "0",
-  data: "0x"
-}
+/* ================= SAFE TX ================= */
 
-const safeTx = await protocolKit.createTransaction({
-  transactions: [safeTransactionData]
+const tx = await protocolKit.createTransaction({
+  transactions: [{
+    to: SAFE_ADDRESS,
+    value: "0",
+    data: "0x"
+  }]
 })
 
-const safeTxHash =
-  await protocolKit.getTransactionHash(safeTx)
+const hash = await protocolKit.getTransactionHash(tx)
 
-const senderSignature =
-  await protocolKit.signHash(safeTxHash)
+const sig = await protocolKit.signHash(hash)
 
 await apiKit.proposeTransaction({
   safeAddress: SAFE_ADDRESS,
-  safeTransactionData:
-    safeTx.data,
-  safeTxHash,
-  senderAddress:
-    await signer.getAddress(),
-  senderSignature:
-    senderSignature.data,
-  origin: markdownReason
+  safeTransactionData: tx.data,
+  safeTxHash: hash,
+  senderAddress: await signer.getAddress(),
+  senderSignature: sig.data,
+  origin: markdown
 })
 
 proposal.safeQueued = true
@@ -117,4 +109,4 @@ fs.writeFileSync(
   JSON.stringify(polls, null, 2)
 )
 
-console.log("✅ Safe transaction queued")
+console.log("✅ SAFE TX SUCCESSFULLY QUEUED")
