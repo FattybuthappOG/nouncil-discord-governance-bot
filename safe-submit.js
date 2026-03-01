@@ -1,100 +1,75 @@
-import Safe from "@safe-global/protocol-kit"
-import SafeApiKit from "@safe-global/api-kit"
-import { ethers } from "ethers"
-import fs from "fs"
+import Safe from '@safe-global/protocol-kit'
+import SafeApiKit from '@safe-global/api-kit'
+import { ethers } from 'ethers'
 
 console.log("🚀 Safe automation boot")
 
-/* ================= ENV ================= */
+/* ------------------------------------------------ */
+/* ENV                                              */
+/* ------------------------------------------------ */
 
-const PRIVATE_KEY = process.env.SAFE_PRIVATE_KEY
 const RPC_URL = process.env.RPC_URL
+const PRIVATE_KEY = process.env.SAFE_PRIVATE_KEY
 const SAFE_ADDRESS = process.env.SAFE_ADDRESS
 
-if (!PRIVATE_KEY) throw Error("Missing PRIVATE KEY")
-if (!RPC_URL) throw Error("Missing RPC_URL")
-if (!SAFE_ADDRESS) throw Error("Missing SAFE_ADDRESS")
+if (!RPC_URL || !PRIVATE_KEY || !SAFE_ADDRESS) {
+  throw new Error("Missing ENV variables")
+}
 
-if (!ethers.isAddress(SAFE_ADDRESS))
-  throw Error("Invalid SAFE_ADDRESS")
-
-/* ================= PROVIDER ================= */
+/* ------------------------------------------------ */
+/* PROVIDER                                         */
+/* ------------------------------------------------ */
 
 const provider = new ethers.JsonRpcProvider(RPC_URL)
 const signer = new ethers.Wallet(PRIVATE_KEY, provider)
 
-console.log("Proposer:", await signer.getAddress())
+console.log("Proposer:", signer.address)
 
-/* ================= SAFE INIT ================= */
+/* ------------------------------------------------ */
+/* SAFE SDK INIT ✅ CORRECT FOR v6                  */
+/* ------------------------------------------------ */
 
-const protocolKit = await Safe.init({
+const protocolKit = await Safe.default.init({
   provider: RPC_URL,
   signer: PRIVATE_KEY,
   safeAddress: SAFE_ADDRESS
 })
 
-const apiKit = new SafeApiKit({
+console.log("✅ Safe connected")
+
+/* ------------------------------------------------ */
+/* SAFE API                                         */
+/* ------------------------------------------------ */
+
+const safeApi = new SafeApiKit({
   chainId: 1n
 })
 
-console.log("✅ Safe connected")
+/* ------------------------------------------------ */
+/* DUMMY TX (TEST SAFE QUEUE)                       */
+/* ------------------------------------------------ */
 
-/* ================= LOAD POLLS ================= */
-
-if (!fs.existsSync("polls.json")) {
-  console.log("No polls")
-  process.exit(0)
+const safeTransactionData = {
+  to: SAFE_ADDRESS,
+  data: "0x",
+  value: "0"
 }
 
-const polls = JSON.parse(fs.readFileSync("polls.json"))
-
-const proposal = Object.values(polls).find(
-  p => p.passed && !p.safeQueued
-)
-
-if (!proposal) {
-  console.log("Nothing to queue")
-  process.exit(0)
-}
-
-/* ================= MARKDOWN ================= */
-
-const markdown = `
-${proposal.title}
-
-FOR - ${proposal.forVotes}
-AGAINST - ${proposal.againstVotes}
-ABSTAIN - ${proposal.abstainVotes}
-`
-
-/* ================= CREATE SAFE TX ================= */
-
-const tx = await protocolKit.createTransaction({
-  transactions: [{
-    to: SAFE_ADDRESS,
-    value: "0",
-    data: "0x"
-  }]
+const safeTx = await protocolKit.createTransaction({
+  transactions: [safeTransactionData]
 })
 
-const hash = await protocolKit.getTransactionHash(tx)
+const safeTxHash = await protocolKit.getTransactionHash(safeTx)
 
-const signature = await protocolKit.signHash(hash)
+await protocolKit.signTransaction(safeTx)
 
-await apiKit.proposeTransaction({
+await safeApi.proposeTransaction({
   safeAddress: SAFE_ADDRESS,
-  safeTransactionData: tx.data,
-  safeTxHash: hash,
-  senderAddress: await signer.getAddress(),
-  senderSignature: signature.data,
-  origin: markdown
+  safeTransactionData: safeTx.data,
+  safeTxHash,
+  senderAddress: signer.address,
+  senderSignature:
+    safeTx.signatures.get(signer.address.toLowerCase()).data
 })
 
-proposal.safeQueued = true
-
-fs.writeFileSync(
-  "polls.json",
-  JSON.stringify(polls, null, 2)
-)
-
-console.log("✅ Proposed to Safe")
+console.log("✅ Transaction proposed to Safe")
