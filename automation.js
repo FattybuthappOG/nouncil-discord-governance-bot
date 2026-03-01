@@ -4,22 +4,39 @@ const WEBHOOK = process.env.DISCORD_WEBHOOK
 
 console.log("Automation starting")
 
-/* ================= CONFIG ================= */
-
-const START_FROM = 946
-const CHECK_COUNT = 5
-
 /* ================= STORAGE ================= */
 
 const FILE = "seen_proposals.json"
 
 if (!fs.existsSync(FILE)) {
-  fs.writeFileSync(FILE, JSON.stringify({ seen: [] }, null, 2))
+  fs.writeFileSync(FILE, JSON.stringify({
+    lastPosted: 946
+  }, null, 2))
 }
 
 const db = JSON.parse(fs.readFileSync(FILE))
 
-/* ================= SEND POLL ================= */
+/* ================= GET LATEST ================= */
+
+async function getLatestProposal() {
+
+  // simple safe probe forward
+  let id = db.lastPosted + 1
+
+  while (true) {
+    const res = await fetch(
+      `https://nouncil.club/proposal/${id}`
+    )
+
+    if (!res.ok) break
+
+    id++
+  }
+
+  return id - 1
+}
+
+/* ================= SEND ================= */
 
 async function sendPoll(id) {
 
@@ -45,16 +62,25 @@ async function sendPoll(id) {
 
 async function run() {
 
-  const latest = START_FROM + CHECK_COUNT
+  const latest = await getLatestProposal()
 
-  for (let id = latest; id >= START_FROM; id--) {
+  console.log("Latest:", latest)
+  console.log("Last posted:", db.lastPosted)
 
-    if (db.seen.includes(id)) continue
-
-    await sendPoll(id)
-
-    db.seen.push(id)
+  if (latest <= db.lastPosted) {
+    console.log("No new proposals")
+    return
   }
+
+  for (
+    let id = db.lastPosted + 1;
+    id <= latest;
+    id++
+  ) {
+    await sendPoll(id)
+  }
+
+  db.lastPosted = latest
 
   fs.writeFileSync(FILE, JSON.stringify(db, null, 2))
 
