@@ -1,133 +1,64 @@
-import fs from "fs"
-import { ethers } from "ethers"
+const fs = require("fs")
 
 const WEBHOOK = process.env.DISCORD_WEBHOOK
 
-const RPC = "https://eth.llamarpc.com"
+console.log("Automation starting")
 
-const DAO_ADDRESS =
-"0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03"
+/* ================= CONFIG ================= */
 
-const provider =
-new ethers.JsonRpcProvider(RPC)
+const START_FROM = 946
+const CHECK_COUNT = 5
 
-const DAO_ABI = [
-"event ProposalCreated(uint256 id,address proposer,address[] targets,uint256[] values,string[] signatures,bytes[] calldatas,uint256 startBlock,uint256 endBlock,string description)"
-]
+/* ================= STORAGE ================= */
 
-const dao =
-new ethers.Contract(
-DAO_ADDRESS,
-DAO_ABI,
-provider
-)
+const FILE = "seen_proposals.json"
 
-const STATE_FILE="polls.json"
-
-if(!fs.existsSync(STATE_FILE))
-fs.writeFileSync(STATE_FILE,"{}")
-
-const polls=
-JSON.parse(fs.readFileSync(STATE_FILE))
-
-const SCAN_FILE="scan_state.json"
-
-if(!fs.existsSync(SCAN_FILE))
-fs.writeFileSync(SCAN_FILE,JSON.stringify({last:0},null,2))
-
-const scanState=
-JSON.parse(fs.readFileSync(SCAN_FILE))
-
-async function sendPoll(id,closeTime){
-
-const body={
-content:"@nouncilor",
-embeds:[{
-title:`Prop ${id}`,
-description:`https://nouncil.club/proposal/${id}`,
-color:5793266
-}]
+if (!fs.existsSync(FILE)) {
+  fs.writeFileSync(FILE, JSON.stringify({ seen: [] }, null, 2))
 }
 
-await fetch(WEBHOOK,{
-method:"POST",
-headers:{"Content-Type":"application/json"},
-body:JSON.stringify(body)
-})
+const db = JSON.parse(fs.readFileSync(FILE))
 
+/* ================= SEND POLL ================= */
+
+async function sendPoll(id) {
+
+  const body = {
+    content: "@nouncilor",
+    embeds: [{
+      title: `Prop ${id}`,
+      description: `https://nouncil.club/proposal/${id}`,
+      color: 5793266
+    }]
+  }
+
+  await fetch(WEBHOOK, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  })
+
+  console.log("Posted proposal", id)
 }
 
-async function scanProposals(){
+/* ================= MAIN ================= */
 
-const latest=
-await provider.getBlockNumber()
+async function run() {
 
-let fromBlock=
-scanState.last || (latest-800)
+  const latest = START_FROM + CHECK_COUNT
 
-if(fromBlock < 0) fromBlock=0
+  for (let id = latest; id >= START_FROM; id--) {
 
-while(fromBlock < latest){
+    if (db.seen.includes(id)) continue
 
-const toBlock=
-Math.min(fromBlock+900,latest)
+    await sendPoll(id)
 
-const events=
-await dao.queryFilter(
-dao.filters.ProposalCreated(),
-fromBlock,
-toBlock
-)
+    db.seen.push(id)
+  }
 
-for(const e of events){
+  fs.writeFileSync(FILE, JSON.stringify(db, null, 2))
 
-const id=Number(e.args.id)
-
-if(polls[id]) continue
-
-const endBlock=
-Number(e.args.endBlock)
-
-const block=
-await provider.getBlock(endBlock)
-
-const closeTime=
-block.timestamp-86400
-
-polls[id]={
-closeTime,
-passed:true,
-queued:false
-}
-
-await sendPoll(id,closeTime)
-
-}
-
-fromBlock=toBlock+1
-
-}
-
-scanState.last=latest
-
-fs.writeFileSync(
-SCAN_FILE,
-JSON.stringify(scanState,null,2)
-)
-
-}
-
-async function run(){
-
-await scanProposals()
-
-fs.writeFileSync(
-STATE_FILE,
-JSON.stringify(polls,null,2)
-)
-
-console.log("Automation complete")
-
+  console.log("Automation complete")
 }
 
 run()
