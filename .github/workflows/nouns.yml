@@ -1,9 +1,9 @@
 name: Nouncil Automation
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"
   workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
 
 jobs:
   run:
@@ -18,18 +18,13 @@ jobs:
 
       - run: npm install
 
-      - run: node automation.js
+      - name: Run automation
+        run: node automation.js
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
 
-      - run: node safe-submit.js
+      - name: Queue Safe TX
+        run: node safe-submit.js
         env:
           SAFE_PRIVATE_KEY: ${{ secrets.SAFE_PRIVATE_KEY }}
-
-      - name: Commit state
-        run: |
-          git config user.name github-actions
-          git config user.email actions@github.com
-          git add polls.json queued.json
-          git commit -m "update governance state" || echo "no changes"
-          git push
+          RPC_URL: ${{ secrets.RPC_URL }}
