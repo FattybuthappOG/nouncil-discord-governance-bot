@@ -22,10 +22,14 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
 
+      - run: node safe-submit.js
+        env:
+          SAFE_PRIVATE_KEY: ${{ secrets.SAFE_PRIVATE_KEY }}
+
       - name: Commit state
         run: |
           git config user.name github-actions
           git config user.email actions@github.com
-          git add seen_proposals.json
-          git commit -m "update proposals" || echo "no changes"
+          git add polls.json
+          git commit -m "update governance state" || echo "no changes"
           git push
