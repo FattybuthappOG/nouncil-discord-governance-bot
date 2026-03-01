@@ -3,11 +3,11 @@ import fs from "fs"
 /* ================= CONFIG ================= */
 
 const WEBHOOK = process.env.DISCORD_WEBHOOK
-const GOVERNOR =
-  "https://api.thegraph.com/subgraphs/name/nounsdao/nouns-subgraph"
-
 const START_FROM = 946
 const CHECK_LAST = 10
+
+const GRAPH =
+  "https://api.thegraph.com/subgraphs/name/nounsdao/nouns-subgraph"
 
 /* ================= STORAGE ================= */
 
@@ -19,81 +19,90 @@ if (!fs.existsSync(FILE)) {
 
 const db = JSON.parse(fs.readFileSync(FILE))
 
-/* ================= GRAPH QUERY ================= */
+/* ================= SAFE FETCH ================= */
 
-async function latestProposal() {
+async function latestProposalId() {
 
-  const res = await fetch(GOVERNOR, {
+  const query = {
+    query: `
+      {
+        proposals(first:1, orderBy:id, orderDirection:desc){
+          id
+        }
+      }
+    `
+  }
+
+  const res = await fetch(GRAPH, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query: `
-      {
-        proposals(first:1,orderBy:id,orderDirection:desc){
-          id
-          title
-        }
-      }`
-    })
+    body: JSON.stringify(query)
   })
 
   const json = await res.json()
-  return json.data.proposals[0]
+
+  /* ✅ SAFETY CHECK */
+  if (!json?.data?.proposals?.length) {
+    console.log("❌ Graph returned invalid response")
+    console.log(JSON.stringify(json))
+    process.exit(0)
+  }
+
+  return Number(json.data.proposals[0].id)
 }
 
-/* ================= SEND POLL ================= */
+/* ================= DISCORD ================= */
 
-async function sendPoll(id,title){
+async function sendPoll(id) {
 
-  const body={
-    content:"<@&NOUNCIL_ROLE_ID>",
-    embeds:[{
-      title:`Prop ${id}: ${title}`,
-      description:`https://nouncil.club/proposal/${id}`,
-      color:5793266
-    }],
-    components:[{
-      type:1,
-      components:[
-        {type:2,label:"For",style:3,custom_id:"vote_for"},
-        {type:2,label:"Against",style:4,custom_id:"vote_against"},
-        {type:2,label:"Abstain",style:2,custom_id:"vote_abstain"}
+  const body = {
+    content: "@nouncilor",
+    embeds: [{
+      title: `Prop ${id}`,
+      description: `https://nouncil.club/proposal/${id}`,
+      color: 5793266,
+      fields: [
+        { name: "FOR", value: "⬜", inline: true },
+        { name: "AGAINST", value: "⬜", inline: true },
+        { name: "ABSTAIN", value: "⬜", inline: true }
       ]
     }]
   }
 
-  await fetch(WEBHOOK,{
-    method:"POST",
-    headers:{ "Content-Type":"application/json"},
-    body:JSON.stringify(body)
+  await fetch(WEBHOOK, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
   })
 
-  console.log("Poll sent:",id)
+  console.log("✅ Poll sent:", id)
 }
 
 /* ================= MAIN ================= */
 
-async function run(){
+async function run() {
 
-  const latest=await latestProposal()
-  const latestId=parseInt(latest.id)
+  const latest = await latestProposalId()
 
-  console.log("Latest proposal:",latestId)
+  console.log("Latest proposal:", latest)
 
-  for(
-    let id=latestId;
-    id>latestId-CHECK_LAST && id>=START_FROM;
+  for (
+    let id = latest;
+    id > latest - CHECK_LAST;
     id--
-  ){
+  ) {
 
-    if(db.seen.includes(id)) continue
+    if (id < START_FROM) continue
+    if (db.seen.includes(id)) continue
 
-    await sendPoll(id,`Nouns Proposal`)
+    console.log("Creating poll for", id)
+
+    await sendPoll(id)
 
     db.seen.push(id)
   }
 
-  fs.writeFileSync(FILE,JSON.stringify(db,null,2))
+  fs.writeFileSync(FILE, JSON.stringify(db, null, 2))
 }
 
 run()
