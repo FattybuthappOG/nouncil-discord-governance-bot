@@ -1,14 +1,14 @@
 import {
-  Client,
-  GatewayIntentBits,
-  Events,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  EmbedBuilder
+Client,
+GatewayIntentBits,
+Events,
+EmbedBuilder,
+ActionRowBuilder,
+ButtonBuilder,
+ButtonStyle,
+ModalBuilder,
+TextInputBuilder,
+TextInputStyle
 } from "discord.js"
 
 import fs from "fs"
@@ -17,249 +17,150 @@ import http from "http"
 
 dotenv.config()
 
-console.log("✅ Nouncil Governance Bot Starting")
+console.log("Nouncil Phase 2 Bot Starting")
+
+/* ================= KEEP ALIVE ================= */
+
+http.createServer((req,res)=>{
+res.writeHead(200)
+res.end("alive")
+}).listen(process.env.PORT || 3000)
 
 /* ================= ENV ================= */
 
 const TOKEN = process.env.DISCORD_TOKEN
 const NOUNCIL_ROLE_ID = process.env.NOUNCIL_ROLE_ID
 
-/* ================= KEEP ALIVE ================= */
-
-http.createServer((req,res)=>{
-  res.end("alive")
-}).listen(process.env.PORT || 3000)
-
 /* ================= CLIENT ================= */
 
 const client = new Client({
-  intents:[GatewayIntentBits.Guilds]
+intents:[
+GatewayIntentBits.Guilds,
+GatewayIntentBits.GuildMembers
+]
 })
 
 /* ================= STORAGE ================= */
 
 const FILE="./polls.json"
 if(!fs.existsSync(FILE))
-  fs.writeFileSync(FILE,JSON.stringify({}))
+fs.writeFileSync(FILE,"{}")
 
 const load=()=>JSON.parse(fs.readFileSync(FILE))
-const save=(d)=>fs.writeFileSync(FILE,JSON.stringify(d,null,2))
+const save=d=>fs.writeFileSync(FILE,JSON.stringify(d,null,2))
 
-/* ================= HELPERS ================= */
-
-function counts(votes){
-  return{
-    for:Object.values(votes).filter(v=>v.choice==="for").length,
-    against:Object.values(votes).filter(v=>v.choice==="against").length,
-    abstain:Object.values(votes).filter(v=>v.choice==="abstain").length
-  }
-}
+/* ================= BUTTONS ================= */
 
 function buttons(disabled=false){
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("vote_for")
-      .setLabel("For")
-      .setStyle(ButtonStyle.Success)
-      .setDisabled(disabled),
-
-    new ButtonBuilder()
-      .setCustomId("vote_against")
-      .setLabel("Against")
-      .setStyle(ButtonStyle.Danger)
-      .setDisabled(disabled),
-
-    new ButtonBuilder()
-      .setCustomId("vote_abstain")
-      .setLabel("Abstain")
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(disabled)
-  )
-}
-
-function embed(poll){
-  const c=counts(poll.votes)
-
-  return new EmbedBuilder()
-    .setTitle(poll.title)
-    .setDescription(poll.link)
-    .addFields(
-      {name:"For",value:String(c.for),inline:true},
-      {name:"Against",value:String(c.against),inline:true},
-      {name:"Abstain",value:String(c.abstain),inline:true}
-    )
+return new ActionRowBuilder().addComponents(
+new ButtonBuilder().setCustomId("for").setLabel("FOR").setStyle(ButtonStyle.Success).setDisabled(disabled),
+new ButtonBuilder().setCustomId("against").setLabel("AGAINST").setStyle(ButtonStyle.Danger).setDisabled(disabled),
+new ButtonBuilder().setCustomId("abstain").setLabel("ABSTAIN").setStyle(ButtonStyle.Secondary).setDisabled(disabled)
+)
 }
 
 /* ================= READY ================= */
 
 client.once(Events.ClientReady,()=>{
-  console.log("✅ Logged in:",client.user.tag)
+console.log("✅ Logged:",client.user.tag)
 })
 
-/* ================= AUTO THREAD ================= */
+/* ================= AUTO DETECT POLLS ================= */
 
 client.on(Events.MessageCreate,async msg=>{
 
-  if(!msg.author.bot) return
-  if(!msg.embeds.length) return
+if(!msg.author.bot) return
+if(!msg.embeds.length) return
 
-  const title=msg.embeds[0].title
-  if(!title?.startsWith("Prop")) return
+const title=msg.embeds[0].title
+if(!title?.startsWith("Prop")) return
 
-  const polls=load()
-  if(polls[msg.id]) return
+const polls=load()
 
-  const thread=await msg.startThread({
-    name:`${title} — Voting Record`,
-    autoArchiveDuration:1440
-  })
+if(polls[msg.id]) return
 
-  polls[msg.id]={
-    title,
-    link:msg.embeds[0].description,
-    votes:{},
-    threadId:thread.id
-  }
-
-  save(polls)
-
-  console.log("Thread created for",title)
+const thread=await msg.startThread({
+name:`${title} — Votes`,
+autoArchiveDuration:1440
 })
 
-/* ================= BUTTON CLICK ================= */
+polls[msg.id]={
+title,
+threadId:thread.id,
+votes:{}
+}
 
-client.on(Events.InteractionCreate,async interaction=>{
+save(polls)
 
-  try{
-
-    /* ---------- BUTTON ---------- */
-
-    if(interaction.isButton()){
-
-      const member=interaction.member
-
-      if(!member.roles.cache.has(NOUNCIL_ROLE_ID))
-        return interaction.reply({
-          content:"Only nouncilors may vote.",
-          ephemeral:true
-        })
-
-      const choice=interaction.customId.replace("vote_","")
-
-      const modal=new ModalBuilder()
-        .setCustomId(`reason_${choice}`)
-        .setTitle("Vote Reason (optional)")
-
-      const input=new TextInputBuilder()
-        .setCustomId("reason")
-        .setLabel("Reason")
-        .setRequired(false)
-        .setStyle(TextInputStyle.Paragraph)
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(input)
-      )
-
-      await interaction.showModal(modal)
-    }
-
-    /* ---------- MODAL ---------- */
-
-    if(interaction.isModalSubmit()){
-
-      const choice=
-        interaction.customId.replace("reason_","")
-
-      const polls=load()
-      const poll=polls[interaction.message.id]
-
-      if(!poll) return
-
-      const reason=
-        interaction.fields.getTextInputValue("reason")
-
-      poll.votes[interaction.user.id]={
-        user:interaction.user.username,
-        choice,
-        reason
-      }
-
-      save(polls)
-
-      const thread=
-        await client.channels.fetch(poll.threadId)
-
-      await thread.send(
-        `**${interaction.user.username}** — ${choice.toUpperCase()}`
-        +(reason?`\n"${reason}"`:"")
-      )
-
-      await interaction.update({
-        embeds:[embed(poll)],
-        components:[buttons()]
-      })
-    }
-
-  }catch(err){
-    console.error(err)
-  }
+await msg.edit({
+components:[buttons()]
 })
 
-/* ================= MARKDOWN EXPORT ================= */
+console.log("Thread created for",title)
 
-setInterval(async()=>{
+})
 
-  const polls=load()
+/* ================= VOTE CLICK ================= */
 
-  for(const id in polls){
+client.on(Events.InteractionCreate,async i=>{
 
-    const poll=polls[id]
-    if(poll.exported) continue
+if(i.isButton()){
 
-    const c=counts(poll.votes)
+const member=await i.guild.members.fetch(i.user.id)
 
-    const winner=
-      Object.entries(c)
-      .sort((a,b)=>b[1]-a[1])[0][0]
-      .toUpperCase()
+if(!member.roles.cache.has(NOUNCIL_ROLE_ID))
+return i.reply({content:"Nouncil only.",ephemeral:true})
 
-    let md=`${poll.title}: ${winner} — WINS\n\n`
+const modal=new ModalBuilder()
+.setCustomId(`vote_${i.customId}_${i.message.id}`)
+.setTitle("Optional Vote Reason")
 
-    for(const side of["for","against","abstain"]){
+const input=new TextInputBuilder()
+.setCustomId("reason")
+.setLabel("Reason")
+.setStyle(TextInputStyle.Paragraph)
+.setRequired(false)
 
-      const voters=
-        Object.values(poll.votes)
-        .filter(v=>v.choice===side)
+modal.addComponents(
+new ActionRowBuilder().addComponents(input)
+)
 
-      md+=`${side.toUpperCase()} — ${voters.length} VOTES\n`
+await i.showModal(modal)
+}
 
-      voters.forEach(v=>{
-        md+=v.reason
-          ?`${v.user} "${v.reason}"\n`
-          :`${v.user}\n`
-      })
+/* ================= MODAL ================= */
 
-      md+="\n"
-    }
+if(i.isModalSubmit()){
 
-    fs.writeFileSync(
-      `prop-${poll.title.match(/\d+/)[0]}.md`,
-      md
-    )
+const [_,choice,msgId]=i.customId.split("_")
 
-    poll.exported=true
-    save(polls)
+const polls=load()
+const poll=polls[msgId]
+if(!poll) return
 
-    const thread=
-      await client.channels.fetch(poll.threadId)
+const reason=i.fields.getTextInputValue("reason")
 
-    await thread.send(
-      "✅ Markdown export generated."
-    )
-  }
+poll.votes[i.user.id]={
+choice,
+reason,
+user:i.user.username
+}
 
-},60000)
+save(polls)
 
-/* ================= LOGIN ================= */
+const thread=await client.channels.fetch(poll.threadId)
+
+await thread.send(
+`**${i.user.username}** — ${choice.toUpperCase()}`
++(reason?`\n"${reason}"`:"")
+)
+
+await i.reply({
+content:`Vote recorded: ${choice}`,
+ephemeral:true
+})
+}
+
+})
 
 client.login(TOKEN)
