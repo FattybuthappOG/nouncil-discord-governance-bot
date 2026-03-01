@@ -1,145 +1,153 @@
 import fs from "fs"
 import { ethers } from "ethers"
-import Safe from "@safe-global/protocol-kit"
+
+import SafeProtocolKit from "@safe-global/protocol-kit"
 import SafeApiKit from "@safe-global/api-kit"
 
-/* CONFIG */
+/* ================= CONFIG ================= */
 
-const RPC="https://eth.llamarpc.com"
+const RPC =
+  "https://eth-mainnet.g.alchemy.com/v2/demo"
 
-const SAFE_ADDRESS=
-"0xcC2688350d29623E2A0844Cc8885F9050F0f6Ed5"
+const SAFE_ADDRESS =
+  "0xYOUR_SAFE_ADDRESS"
 
-const DAO_ADDRESS=
-"0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03"
+const GOVERNOR =
+  "0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03"
 
-const PRIVATE_KEY=
-process.env.SAFE_PRIVATE_KEY
+const PRIVATE_KEY = process.env.SAFE_PRIVATE_KEY
 
-/* STORAGE */
+/* ================= STORAGE ================= */
 
-const polls=
-JSON.parse(fs.readFileSync("polls.json"))
-
-/* PROVIDER */
-
-const provider=
-new ethers.JsonRpcProvider(RPC)
-
-const signer=
-new ethers.Wallet(PRIVATE_KEY,provider)
-
-/* SAFE SETUP */
-
-const ethAdapter={
-ethers,
-signerOrProvider:signer
-}
-
-const safeSdk=
-await Safe.create({
-ethAdapter,
-safeAddress:SAFE_ADDRESS
-})
-
-const apiKit=
-new SafeApiKit({
-txServiceUrl:
-"https://safe-transaction-mainnet.safe.global",
-ethAdapter
-})
-
-/* DAO */
-
-const DAO_ABI=[
-"function state(uint256) view returns(uint8)",
-"function queue(uint256)"
-]
-
-const dao=
-new ethers.Contract(
-DAO_ADDRESS,
-DAO_ABI,
-provider
+const POLLS = JSON.parse(
+  fs.readFileSync("polls.json")
 )
 
-async function queueIfReady(id){
+const QUEUED_FILE = "queued.json"
 
-const poll=polls[id]
-if(!poll) return
-
-const now=Math.floor(Date.now()/1000)
-
-if(now < poll.closeTime) return
-if(poll.queued) return
-
-const state=
-await dao.state(id)
-
-/*
-STATE:
-4 = Succeeded
-5 = Queued
-7 = Executed
-*/
-
-if(state!=4){
-console.log("Not succeeded yet:",id)
-return
+if (!fs.existsSync(QUEUED_FILE)) {
+  fs.writeFileSync(
+    QUEUED_FILE,
+    JSON.stringify({ queued: [] }, null, 2)
+  )
 }
 
-console.log("Creating Safe queue tx for",id)
-
-const data=
-dao.interface.encodeFunctionData(
-"queue",
-[id]
+const queuedDB = JSON.parse(
+  fs.readFileSync(QUEUED_FILE)
 )
 
-const safeTransactionData={
-to:DAO_ADDRESS,
-value:"0",
-data
-}
+/* ================= PROVIDER ================= */
 
-const safeTx=
-await safeSdk.createTransaction({
-transactions:[safeTransactionData]
+const provider = new ethers.JsonRpcProvider(RPC)
+const signer = new ethers.Wallet(
+  PRIVATE_KEY,
+  provider
+)
+
+/* ================= SAFE INIT ================= */
+
+const protocolKit =
+  await SafeProtocolKit.default.init({
+    provider: RPC,
+    signer: PRIVATE_KEY,
+    safeAddress: SAFE_ADDRESS
+  })
+
+const apiKit = new SafeApiKit.default({
+  chainId: 1n
 })
 
-const txHash=
-await safeSdk.getTransactionHash(safeTx)
+/* ================= HELPERS ================= */
 
-const senderSignature=
-await safeSdk.signTransactionHash(txHash)
+function buildMarkdown(prop) {
+  return `
+Prop ${prop.id}: ${prop.result} - Wins
 
-await apiKit.proposeTransaction({
-safeAddress:SAFE_ADDRESS,
-safeTransactionData:safeTx.data,
-safeTxHash:txHash,
-senderAddress:
-await signer.getAddress(),
-senderSignature:
-senderSignature.data
-})
-
-poll.queued=true
-
-console.log("✅ Queue proposed via Safe")
-
+FOR - ${prop.for || 0} VOTES
+AGAINST - ${prop.against || 0} VOTES
+ABSTAINS - ${prop.abstain || 0} VOTES
+`
 }
 
-async function run(){
+/* ================= MAIN ================= */
 
-for(const id of Object.keys(polls)){
-await queueIfReady(id)
+for (const prop of POLLS.closed || []) {
+
+  if (queuedDB.queued.includes(prop.id)) {
+    console.log(
+      "Already queued:",
+      prop.id
+    )
+    continue
+  }
+
+  if (prop.result !== "FOR") {
+    console.log(
+      "Vote did not pass:",
+      prop.id
+    )
+    continue
+  }
+
+  console.log(
+    "Queueing Safe TX for Prop",
+    prop.id
+  )
+
+  /* ---------- SAFE TX ---------- */
+
+  const safeTransactionData = {
+    to: GOVERNOR,
+    data: "0x",
+    value: "0"
+  }
+
+  const safeTx =
+    await protocolKit.createTransaction({
+      transactions: [safeTransactionData]
+    })
+
+  const txHash =
+    await protocolKit.getTransactionHash(
+      safeTx
+    )
+
+  await protocolKit.signTransaction(
+    safeTx
+  )
+
+  await apiKit.proposeTransaction({
+    safeAddress: SAFE_ADDRESS,
+    safeTransactionData:
+      safeTx.data,
+    safeTxHash: txHash,
+    senderAddress:
+      await signer.getAddress(),
+    senderSignature:
+      safeTx.signatures.values()
+        .next().value.data
+  })
+
+  console.log(
+    "✅ Proposed to Safe:",
+    prop.id
+  )
+
+  /* ---------- MARKDOWN EXPORT ---------- */
+
+  fs.writeFileSync(
+    `result-${prop.id}.md`,
+    buildMarkdown(prop)
+  )
+
+  queuedDB.queued.push(prop.id)
 }
+
+/* ================= SAVE ================= */
 
 fs.writeFileSync(
-"polls.json",
-JSON.stringify(polls,null,2)
+  QUEUED_FILE,
+  JSON.stringify(queuedDB, null, 2)
 )
 
-}
-
-run()
+console.log("Safe submit complete")
