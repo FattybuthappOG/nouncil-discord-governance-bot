@@ -1,10 +1,12 @@
 import fs from "fs"
 import { ethers } from "ethers"
 
+import Safe from "@safe-global/protocol-kit"
+import SafeApiKit from "@safe-global/api-kit"
+
 /* ================= CONFIG ================= */
 
-const RPC =
-"https://eth.llamarpc.com"
+const RPC = "https://eth.llamarpc.com"
 
 const SAFE_ADDRESS =
 "0xcC2688350d29623E2A0844Cc8885F9050F0f6Ed5"
@@ -17,124 +19,139 @@ process.env.SAFE_PRIVATE_KEY
 
 /* ================= STORAGE ================= */
 
-const POLLS_FILE = "polls.json"
-
-if (!fs.existsSync(POLLS_FILE))
-  fs.writeFileSync(POLLS_FILE,"{}")
-
 const polls =
-JSON.parse(fs.readFileSync(POLLS_FILE))
+JSON.parse(fs.readFileSync("polls.json"))
 
 /* ================= PROVIDER ================= */
 
 const provider =
 new ethers.JsonRpcProvider(RPC)
 
-const wallet =
-new ethers.Wallet(
-PRIVATE_KEY,
-provider
-)
+const signer =
+new ethers.Wallet(PRIVATE_KEY, provider)
+
+/* ================= SAFE SETUP ================= */
+
+const ethAdapter = {
+  ethers,
+  signerOrProvider: signer
+}
+
+const safeSdk =
+await Safe.create({
+  ethAdapter,
+  safeAddress: SAFE_ADDRESS
+})
+
+const apiKit =
+new SafeApiKit({
+  txServiceUrl:
+  "https://safe-transaction-mainnet.safe.global",
+  ethAdapter
+})
 
 /* ================= DAO ================= */
 
-const DAO_ABI = [
-"function state(uint256) view returns(uint8)",
-"function propose(address[],uint256[],string[],bytes[],string) returns(uint256)"
+const DAO_ABI=[
+"function state(uint256) view returns(uint8)"
 ]
 
 const dao =
 new ethers.Contract(
 DAO_ADDRESS,
 DAO_ABI,
-wallet
+provider
 )
 
-/*
-STATE ENUM
+/* ================= SAFE SUBMIT ================= */
 
-0 Pending
-1 Active
-2 Canceled
-3 Defeated
-4 Succeeded
-5 Queued
-6 Expired
-7 Executed
+async function submitProposal(id){
+
+const poll=polls[id]
+if(!poll) return
+
+const now=Math.floor(Date.now()/1000)
+
+if(now < poll.closeTime){
+console.log("poll active")
+return
+}
+
+if(poll.submitted){
+console.log("already submitted")
+return
+}
+
+if(!poll.passed){
+console.log("vote failed")
+return
+}
+
+/* ===== ONCHAIN STATE CHECK ===== */
+
+const state=await dao.state(id)
+
+if(state==5 || state==7){
+console.log("already queued/executed")
+return
+}
+
+/* ===== SAFE TX ===== */
+
+console.log("Creating Safe TX for",id)
+
+/*
+Example tx:
+You replace target later
 */
 
-/* ================= SAFE LOGIC ================= */
+const safeTransactionData={
+to:DAO_ADDRESS,
+value:"0",
+data:"0x"
+}
 
-async function submitIfReady(id) {
+const safeTx =
+await safeSdk.createTransaction({
+transactions:[safeTransactionData]
+})
 
-  const poll = polls[id]
-  if (!poll) return
+const txHash =
+await safeSdk.getTransactionHash(safeTx)
 
-  const now =
-  Math.floor(Date.now()/1000)
+const senderSignature =
+await safeSdk.signTransactionHash(txHash)
 
-  if (now < poll.closeTime) {
-    console.log("Poll still active",id)
-    return
-  }
+await apiKit.proposeTransaction({
+safeAddress:SAFE_ADDRESS,
+safeTransactionData:
+safeTx.data,
+safeTxHash:txHash,
+senderAddress:
+await signer.getAddress(),
+senderSignature:
+senderSignature.data
+})
 
-  if (poll.submitted) {
-    console.log("Already submitted",id)
-    return
-  }
+poll.submitted=true
 
-  const state =
-  await dao.state(id)
-
-  if (
-    state == 5 ||
-    state == 7
-  ) {
-    console.log(
-      "Already queued/executed",
-      id
-    )
-    return
-  }
-
-  if (!poll.passed) {
-    console.log(
-      "Poll failed",
-      id
-    )
-    return
-  }
-
-  console.log(
-    "Submitting proposal via Safe:",
-    id
-  )
-
-  /*
-   IMPORTANT:
-   Here we only mark submission.
-   Real propose payload normally
-   comes from stored proposal data.
-  */
-
-  poll.submitted = true
+console.log("✅ Safe TX proposed")
 
 }
 
 /* ================= RUN ================= */
 
-async function run() {
+async function run(){
 
-  for (const id of Object.keys(polls)) {
-    await submitIfReady(id)
-  }
+for(const id of Object.keys(polls)){
+await submitProposal(id)
+}
 
-  fs.writeFileSync(
-    POLLS_FILE,
-    JSON.stringify(polls,null,2)
-  )
+fs.writeFileSync(
+"polls.json",
+JSON.stringify(polls,null,2)
+)
 
-  console.log("Safe execution check done")
 }
 
 run()
