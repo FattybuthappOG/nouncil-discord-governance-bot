@@ -1,33 +1,14 @@
 import fs from "fs"
 import { ethers } from "ethers"
 
-/* ================= CONFIG ================= */
-
-const WEBHOOK = process.env.DISCORD_WEBHOOK
+const WEBHOOK =
+process.env.DISCORD_WEBHOOK
 
 const RPC =
 "https://eth.llamarpc.com"
 
 const DAO_ADDRESS =
 "0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03"
-
-const START_FROM = 946
-
-/* ================= STORAGE ================= */
-
-const FILE = "seen_proposals.json"
-
-if (!fs.existsSync(FILE)) {
-  fs.writeFileSync(
-    FILE,
-    JSON.stringify({ seen: [] }, null, 2)
-  )
-}
-
-const db =
-JSON.parse(fs.readFileSync(FILE))
-
-/* ================= PROVIDER ================= */
 
 const provider =
 new ethers.JsonRpcProvider(RPC)
@@ -43,98 +24,82 @@ DAO_ABI,
 provider
 )
 
-/* ================= DISCORD ================= */
+const POLLS_FILE="polls.json"
 
-async function sendPoll(id, endTimestamp) {
+if(!fs.existsSync(POLLS_FILE))
+fs.writeFileSync(POLLS_FILE,"{}")
 
-  const closeTime =
-  new Date(
-    (endTimestamp - 86400) * 1000
-  ).toUTCString()
+const polls=
+JSON.parse(fs.readFileSync(POLLS_FILE))
 
-  const body = {
-    content: "@nouncilor",
-    embeds: [{
-      title: `Prop ${id}`,
-      description:
-      `https://nouncil.club/proposal/${id}`,
-      color: 5793266,
-      fields: [
-        { name: "For", value: "⬜", inline: true },
-        { name: "Against", value: "⬜", inline: true },
-        { name: "Abstain", value: "⬜", inline: true },
-        { name: "Closes", value: closeTime }
-      ]
-    }]
-  }
+async function sendPoll(id,closeTime){
 
-  await fetch(WEBHOOK,{
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json"
-    },
-    body:JSON.stringify(body)
-  })
+const body={
+content:"@nouncilor",
+embeds:[{
+title:`Prop ${id}`,
+description:`https://nouncil.club/proposal/${id}`,
+color:5793266,
+fields:[
+{name:"For",value:"⬜",inline:true},
+{name:"Against",value:"⬜",inline:true},
+{name:"Abstain",value:"⬜",inline:true}
+]
+}]
 }
 
-/* ================= MAIN ================= */
+await fetch(WEBHOOK,{
+method:"POST",
+headers:{"Content-Type":"application/json"},
+body:JSON.stringify(body)
+})
 
-async function run() {
+}
 
-  console.log("Checking proposals onchain...")
+async function run(){
 
-  const latestBlock =
-  await provider.getBlockNumber()
+const latest=
+await provider.getBlockNumber()
 
-  const fromBlock =
-  Math.max(latestBlock - 40000, 0)
+const events=
+await dao.queryFilter(
+dao.filters.ProposalCreated(),
+latest-40000,
+latest
+)
 
-  const events =
-  await dao.queryFilter(
-    dao.filters.ProposalCreated(),
-    fromBlock,
-    latestBlock
-  )
+for(const e of events){
 
-  for (const e of events.reverse()) {
+const id=Number(e.args.id)
 
-    const id =
-    Number(e.args.id)
+if(polls[id]) continue
 
-    if (id < START_FROM) continue
-    if (db.seen.includes(id)) continue
+const endBlock=
+Number(e.args.endBlock)
 
-    console.log("Found proposal", id)
+const block=
+await provider.getBlock(endBlock)
 
-    const endBlock =
-    Number(e.args.endBlock)
+const closeTime=
+block.timestamp-86400
 
-    const safeBlock =
-    Math.min(
-      endBlock,
-      await provider.getBlockNumber()
-    )
+polls[id]={
+closeTime,
+passed:true,
+submitted:false
+}
 
-    const block =
-    await provider.getBlock(safeBlock)
+await sendPoll(id,closeTime)
 
-    const endTimestamp =
-    block.timestamp
+}
 
-    await sendPoll(
-      id,
-      endTimestamp
-    )
+fs.writeFileSync(
+POLLS_FILE,
+JSON.stringify(polls,null,2)
+)
 
-    db.seen.push(id)
-  }
+console.log("Poll sync done")
 
-  fs.writeFileSync(
-    FILE,
-    JSON.stringify(db,null,2)
-  )
-
-  console.log("Done.")
 }
 
 run()
