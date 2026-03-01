@@ -1,199 +1,140 @@
-import { ethers } from "ethers"
 import fs from "fs"
+import { ethers } from "ethers"
+
+/* ================= CONFIG ================= */
 
 const WEBHOOK = process.env.DISCORD_WEBHOOK
 
-/* ================= RPC ================= */
+const RPC =
+"https://eth.llamarpc.com"
 
-const provider =
-  new ethers.JsonRpcProvider(
-    "https://eth.llamarpc.com"
-  )
-
-/* ================= DAO ================= */
-
-const DAO =
+const DAO_ADDRESS =
 "0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03"
 
-const ABI = [
-"event ProposalCreated(uint256 id,address proposer,address[] targets,uint256[] values,string[] signatures,bytes[] calldatas,uint256 startBlock,uint256 endBlock,string description)",
-"function state(uint256) view returns(uint8)"
-]
-
-const dao =
-new ethers.Contract(DAO, ABI, provider)
+const START_FROM = 946
 
 /* ================= STORAGE ================= */
 
-const FILE="seen_proposals.json"
+const FILE = "seen_proposals.json"
 
-if(!fs.existsSync(FILE))
-fs.writeFileSync(FILE,JSON.stringify({
-seen:[],
-closed:[],
-executed:[]
-},null,2))
+if (!fs.existsSync(FILE)) {
+  fs.writeFileSync(
+    FILE,
+    JSON.stringify({ seen: [] }, null, 2)
+  )
+}
 
-const db=
+const db =
 JSON.parse(fs.readFileSync(FILE))
+
+/* ================= PROVIDER ================= */
+
+const provider =
+new ethers.JsonRpcProvider(RPC)
+
+const DAO_ABI = [
+"event ProposalCreated(uint256 id,address proposer,address[] targets,uint256[] values,string[] signatures,bytes[] calldatas,uint256 startBlock,uint256 endBlock,string description)"
+]
+
+const dao =
+new ethers.Contract(
+DAO_ADDRESS,
+DAO_ABI,
+provider
+)
 
 /* ================= DISCORD ================= */
 
-async function post(content){
- await fetch(WEBHOOK,{
-  method:"POST",
-  headers:{
-   "Content-Type":"application/json"
-  },
-  body:JSON.stringify(content)
- })
-}
+async function sendPoll(id, endTimestamp) {
 
-/* ================= MARKDOWN ================= */
+  const closeTime =
+  new Date(
+    (endTimestamp - 86400) * 1000
+  ).toUTCString()
 
-function exportMarkdown(id){
+  const body = {
+    content: "@nouncilor",
+    embeds: [{
+      title: `Prop ${id}`,
+      description:
+      `https://nouncil.club/proposal/${id}`,
+      color: 5793266,
+      fields: [
+        { name: "For", value: "⬜", inline: true },
+        { name: "Against", value: "⬜", inline: true },
+        { name: "Abstain", value: "⬜", inline: true },
+        { name: "Closes", value: closeTime }
+      ]
+    }]
+  }
 
-const md=`
-Prop ${id}: Results
-
-FOR -
-AGAINST -
-ABSTAIN -
-`
-
-fs.writeFileSync(
-`prop-${id}.md`,
-md
-)
-
-return md
-}
-
-/* ================= POLL CREATE ================= */
-
-async function createPoll(e){
-
-const id=Number(e.args.id)
-
-if(db.seen.includes(id)) return
-
-const block=
-await provider.getBlock(
-e.args.endBlock
-)
-
-const votingEnd=
-block.timestamp*1000
-
-const nouncilClose=
-votingEnd-(24*60*60*1000)
-
-await post({
-content:"@nouncilor",
-embeds:[{
-title:`Prop ${id}`,
-description:e.args.description,
-fields:[
-{
-name:"Voting Ends",
-value:`<t:${Math.floor(votingEnd/1000)}:F>`
-},
-{
-name:"Nouncil Close",
-value:`<t:${Math.floor(nouncilClose/1000)}:F>`
-}
-]
-}]
-})
-
-db.seen.push(id)
-}
-
-/* ================= CLOSE POLL ================= */
-
-async function closePoll(id){
-
-if(db.closed.includes(id)) return
-
-const md=exportMarkdown(id)
-
-await post({
-content:
-`✅ Prop ${id} Nouncil voting closed`,
-embeds:[{
-description:"```markdown\n"+md+"\n```"
-}]
-})
-
-db.closed.push(id)
-}
-
-/* ================= SAFE READY CHECK ================= */
-
-async function maybeExecute(id){
-
-if(db.executed.includes(id)) return
-
-const state=await dao.state(id)
-
-/*
-0 Pending
-1 Active
-2 Canceled
-3 Defeated
-4 Succeeded
-5 Queued
-6 Expired
-7 Executed
-*/
-
-if(state==5){
-console.log(
-"✅ Ready for Safe submit",
-id
-)
-
-/* Safe submission handled separately */
-
-db.executed.push(id)
-}
+  await fetch(WEBHOOK,{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json"
+    },
+    body:JSON.stringify(body)
+  })
 }
 
 /* ================= MAIN ================= */
 
-async function run(){
+async function run() {
 
-const events=
-await dao.queryFilter(
-dao.filters.ProposalCreated(),
--40000
-)
+  console.log("Checking proposals onchain...")
 
-for(const e of events){
+  const latestBlock =
+  await provider.getBlockNumber()
 
-const id=Number(e.args.id)
+  const fromBlock =
+  Math.max(latestBlock - 40000, 0)
 
-await createPoll(e)
+  const events =
+  await dao.queryFilter(
+    dao.filters.ProposalCreated(),
+    fromBlock,
+    latestBlock
+  )
 
-const block=
-await provider.getBlock(
-e.args.endBlock
-)
+  for (const e of events.reverse()) {
 
-const closeTime=
-(block.timestamp*1000)
--(24*60*60*1000)
+    const id =
+    Number(e.args.id)
 
-if(Date.now()>closeTime)
-await closePoll(id)
+    if (id < START_FROM) continue
+    if (db.seen.includes(id)) continue
 
-await maybeExecute(id)
-}
+    console.log("Found proposal", id)
 
-fs.writeFileSync(
-FILE,
-JSON.stringify(db,null,2)
-)
+    const endBlock =
+    Number(e.args.endBlock)
+
+    const safeBlock =
+    Math.min(
+      endBlock,
+      await provider.getBlockNumber()
+    )
+
+    const block =
+    await provider.getBlock(safeBlock)
+
+    const endTimestamp =
+    block.timestamp
+
+    await sendPoll(
+      id,
+      endTimestamp
+    )
+
+    db.seen.push(id)
+  }
+
+  fs.writeFileSync(
+    FILE,
+    JSON.stringify(db,null,2)
+  )
+
+  console.log("Done.")
 }
 
 run()
