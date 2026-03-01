@@ -1,108 +1,95 @@
+import { ethers } from "ethers"
 import fs from "fs"
 
-/* ================= CONFIG ================= */
-
 const WEBHOOK = process.env.DISCORD_WEBHOOK
-const START_FROM = 946
-const CHECK_LAST = 10
 
-const GRAPH =
-  "https://api.thegraph.com/subgraphs/name/nounsdao/nouns-subgraph"
+/* ================= RPC ================= */
+
+const provider = new ethers.JsonRpcProvider(
+  "https://eth.llamarpc.com"
+)
+
+/* ================= NOUNS DAO ================= */
+
+const DAO =
+  "0x9C8fF314C9Bc7F6e59A9D9225Fb22946427Edc03"
+
+const ABI = [
+  "event ProposalCreated(uint256 id,address proposer,address[] targets,uint256[] values,string[] signatures,bytes[] calldatas,uint256 startBlock,uint256 endBlock,string description)"
+]
+
+const dao = new ethers.Contract(DAO, ABI, provider)
 
 /* ================= STORAGE ================= */
 
 const FILE = "seen_proposals.json"
 
-if (!fs.existsSync(FILE)) {
+if (!fs.existsSync(FILE))
   fs.writeFileSync(FILE, JSON.stringify({ seen: [] }, null, 2))
-}
 
 const db = JSON.parse(fs.readFileSync(FILE))
 
-/* ================= SAFE FETCH ================= */
+/* ================= HELPERS ================= */
 
-async function latestProposalId() {
+async function sendPoll(id, description, endBlock) {
 
-  const query = {
-    query: `
-      {
-        proposals(first:1, orderBy:id, orderDirection:desc){
-          id
-        }
-      }
-    `
-  }
+  const block = await provider.getBlock(endBlock)
 
-  const res = await fetch(GRAPH, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(query)
-  })
-
-  const json = await res.json()
-
-  /* ✅ SAFETY CHECK */
-  if (!json?.data?.proposals?.length) {
-    console.log("❌ Graph returned invalid response")
-    console.log(JSON.stringify(json))
-    process.exit(0)
-  }
-
-  return Number(json.data.proposals[0].id)
-}
-
-/* ================= DISCORD ================= */
-
-async function sendPoll(id) {
-
-  const body = {
-    content: "@nouncilor",
-    embeds: [{
-      title: `Prop ${id}`,
-      description: `https://nouncil.club/proposal/${id}`,
-      color: 5793266,
-      fields: [
-        { name: "FOR", value: "⬜", inline: true },
-        { name: "AGAINST", value: "⬜", inline: true },
-        { name: "ABSTAIN", value: "⬜", inline: true }
-      ]
-    }]
-  }
+  const votingEnd = block.timestamp * 1000
+  const closeTime =
+    votingEnd - (24 * 60 * 60 * 1000)
 
   await fetch(WEBHOOK, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
+    body: JSON.stringify({
+      content: "@nouncilor",
+      embeds: [{
+        title: `Prop ${id}`,
+        description,
+        fields: [
+          {
+            name: "Voting ends",
+            value: `<t:${Math.floor(votingEnd/1000)}:F>`
+          },
+          {
+            name: "Nouncil closes",
+            value: `<t:${Math.floor(closeTime/1000)}:F>`
+          }
+        ]
+      }]
+    })
   })
 
-  console.log("✅ Poll sent:", id)
+  console.log("✅ Created poll", id)
 }
 
 /* ================= MAIN ================= */
 
 async function run() {
 
-  const latest = await latestProposalId()
+  const events =
+    await dao.queryFilter(
+      dao.filters.ProposalCreated(),
+      -40000
+    )
 
-  console.log("Latest proposal:", latest)
+  for (const e of events.reverse()) {
 
-  for (
-    let id = latest;
-    id > latest - CHECK_LAST;
-    id--
-  ) {
+    const id = Number(e.args.id)
 
-    if (id < START_FROM) continue
     if (db.seen.includes(id)) continue
 
-    console.log("Creating poll for", id)
-
-    await sendPoll(id)
+    await sendPoll(
+      id,
+      e.args.description,
+      e.args.endBlock
+    )
 
     db.seen.push(id)
   }
 
-  fs.writeFileSync(FILE, JSON.stringify(db, null, 2))
+  fs.writeFileSync(FILE, JSON.stringify(db,null,2))
 }
 
 run()
