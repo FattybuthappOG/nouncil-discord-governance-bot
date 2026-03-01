@@ -1,11 +1,11 @@
 {
-  "name": "nouncil-governance-bot",
-  "version": "3.0.1",
+  "name": "nouncil-discord-governance-bot",
+  "version": "1.0.0",
   "type": "module",
   "dependencies": {
+    "@safe-global/api-kit": "^2.5.0",
+    "@safe-global/protocol-kit": "^5.2.0",
     "ethers": "^6.10.0",
-    "@safe-global/protocol-kit": "5.2.0",
-    "@safe-global/api-kit": "2.2.0",
-    "@safe-global/types-kit": "1.0.0"
+    "node-fetch": "^3.3.2"
   }
 }
