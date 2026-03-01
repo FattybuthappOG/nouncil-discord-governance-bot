@@ -3,39 +3,27 @@ import SafeApiKit from "@safe-global/api-kit"
 import { ethers } from "ethers"
 import fs from "fs"
 
-console.log("🚀 Safe submit starting")
+console.log("🚀 Safe automation boot")
 
 /* ================= ENV ================= */
 
 const PRIVATE_KEY = process.env.SAFE_PRIVATE_KEY
 const RPC_URL = process.env.RPC_URL
+const SAFE_ADDRESS = process.env.SAFE_ADDRESS
 
-// ✅ PUT REAL SAFE HERE
-const SAFE_ADDRESS = "0xcC2688350d29623E2A0844Cc8885F9050F0f6Ed5"
-
-/* ================= VALIDATION ================= */
-
-if (!PRIVATE_KEY) throw Error("Missing SAFE_PRIVATE_KEY")
+if (!PRIVATE_KEY) throw Error("Missing PRIVATE KEY")
 if (!RPC_URL) throw Error("Missing RPC_URL")
+if (!SAFE_ADDRESS) throw Error("Missing SAFE_ADDRESS")
 
 if (!ethers.isAddress(SAFE_ADDRESS))
-  throw Error("INVALID SAFE ADDRESS")
+  throw Error("Invalid SAFE_ADDRESS")
 
 /* ================= PROVIDER ================= */
 
 const provider = new ethers.JsonRpcProvider(RPC_URL)
 const signer = new ethers.Wallet(PRIVATE_KEY, provider)
 
-console.log("Signer:", await signer.getAddress())
-
-/* ================= SAFE EXISTS CHECK ================= */
-
-const code = await provider.getCode(SAFE_ADDRESS)
-
-if (code === "0x")
-  throw Error("SAFE NOT DEPLOYED OR WRONG NETWORK")
-
-console.log("✅ Safe contract detected")
+console.log("Proposer:", await signer.getAddress())
 
 /* ================= SAFE INIT ================= */
 
@@ -49,12 +37,12 @@ const apiKit = new SafeApiKit({
   chainId: 1n
 })
 
-console.log("✅ Safe SDK initialized")
+console.log("✅ Safe connected")
 
 /* ================= LOAD POLLS ================= */
 
 if (!fs.existsSync("polls.json")) {
-  console.log("No polls.json")
+  console.log("No polls")
   process.exit(0)
 }
 
@@ -79,7 +67,7 @@ AGAINST - ${proposal.againstVotes}
 ABSTAIN - ${proposal.abstainVotes}
 `
 
-/* ================= SAFE TX ================= */
+/* ================= CREATE SAFE TX ================= */
 
 const tx = await protocolKit.createTransaction({
   transactions: [{
@@ -91,14 +79,14 @@ const tx = await protocolKit.createTransaction({
 
 const hash = await protocolKit.getTransactionHash(tx)
 
-const sig = await protocolKit.signHash(hash)
+const signature = await protocolKit.signHash(hash)
 
 await apiKit.proposeTransaction({
   safeAddress: SAFE_ADDRESS,
   safeTransactionData: tx.data,
   safeTxHash: hash,
   senderAddress: await signer.getAddress(),
-  senderSignature: sig.data,
+  senderSignature: signature.data,
   origin: markdown
 })
 
@@ -109,4 +97,4 @@ fs.writeFileSync(
   JSON.stringify(polls, null, 2)
 )
 
-console.log("✅ SAFE TX SUCCESSFULLY QUEUED")
+console.log("✅ Proposed to Safe")
