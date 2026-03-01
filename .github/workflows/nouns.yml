@@ -1,4 +1,4 @@
-name: Nouncil Automation
+name: Nouns Governance Automation
 
 on:
   schedule:
@@ -10,26 +10,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - run: npm install
+      - name: Install deps
+        run: npm install
 
-      - run: node automation.js
+      - name: Scan proposals + create polls
+        run: node automation.js
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
 
-      - run: node safe-submit.js
+      - name: Queue passed proposals in Safe
+        run: node safe-submit.js
         env:
           SAFE_PRIVATE_KEY: ${{ secrets.SAFE_PRIVATE_KEY }}
 
-      - name: Commit state
+      # ✅ THIS IS THE IMPORTANT PART
+      - name: Save automation state
         run: |
           git config user.name github-actions
           git config user.email actions@github.com
-          git add polls.json
+          git add polls.json scan_state.json
           git commit -m "update governance state" || echo "no changes"
           git push
