@@ -1,4 +1,4 @@
-name: Nouns Proposal Automation
+name: Nouncil Automation
 
 on:
   schedule:
@@ -9,35 +9,23 @@ jobs:
   run:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - run: npm install
 
-      - name: Run proposal automation
-        run: node automation.js
+      - run: node automation.js
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-
-      - name: Submit Safe transaction
-        run: node safe-submit.js
-        env:
-          SAFE_PRIVATE_KEY: ${{ secrets.SAFE_PRIVATE_KEY }}
 
       - name: Commit state
         run: |
           git config user.name github-actions
           git config user.email actions@github.com
-          git add seen_proposals.json || true
-          git commit -m "update seen proposals" || echo "no changes"
+          git add seen_proposals.json
+          git commit -m "update proposals" || echo "no changes"
           git push
