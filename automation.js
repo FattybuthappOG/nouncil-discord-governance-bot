@@ -1,11 +1,9 @@
 import fs from "fs"
 import { ethers } from "ethers"
 
-const WEBHOOK =
-process.env.DISCORD_WEBHOOK
+const WEBHOOK = process.env.DISCORD_WEBHOOK
 
-const RPC =
-"https://eth.llamarpc.com"
+const RPC = "https://eth.llamarpc.com"
 
 const DAO_ADDRESS =
 "0x9c8ff314c9bc7f6e59a9d9225fb22946427edc03"
@@ -24,13 +22,21 @@ DAO_ABI,
 provider
 )
 
-const POLLS_FILE="polls.json"
+const STATE_FILE="polls.json"
 
-if(!fs.existsSync(POLLS_FILE))
-fs.writeFileSync(POLLS_FILE,"{}")
+if(!fs.existsSync(STATE_FILE))
+fs.writeFileSync(STATE_FILE,"{}")
 
 const polls=
-JSON.parse(fs.readFileSync(POLLS_FILE))
+JSON.parse(fs.readFileSync(STATE_FILE))
+
+const SCAN_FILE="scan_state.json"
+
+if(!fs.existsSync(SCAN_FILE))
+fs.writeFileSync(SCAN_FILE,JSON.stringify({last:0},null,2))
+
+const scanState=
+JSON.parse(fs.readFileSync(SCAN_FILE))
 
 async function sendPoll(id,closeTime){
 
@@ -39,12 +45,7 @@ content:"@nouncilor",
 embeds:[{
 title:`Prop ${id}`,
 description:`https://nouncil.club/proposal/${id}`,
-color:5793266,
-fields:[
-{name:"For",value:"⬜",inline:true},
-{name:"Against",value:"⬜",inline:true},
-{name:"Abstain",value:"⬜",inline:true}
-]
+color:5793266
 }]
 }
 
@@ -56,16 +57,26 @@ body:JSON.stringify(body)
 
 }
 
-async function run(){
+async function scanProposals(){
 
 const latest=
 await provider.getBlockNumber()
 
+let fromBlock=
+scanState.last || (latest-800)
+
+if(fromBlock < 0) fromBlock=0
+
+while(fromBlock < latest){
+
+const toBlock=
+Math.min(fromBlock+900,latest)
+
 const events=
 await dao.queryFilter(
 dao.filters.ProposalCreated(),
-latest-40000,
-latest
+fromBlock,
+toBlock
 )
 
 for(const e of events){
@@ -86,19 +97,36 @@ block.timestamp-86400
 polls[id]={
 closeTime,
 passed:true,
-submitted:false
+queued:false
 }
 
 await sendPoll(id,closeTime)
 
 }
 
+fromBlock=toBlock+1
+
+}
+
+scanState.last=latest
+
 fs.writeFileSync(
-POLLS_FILE,
+SCAN_FILE,
+JSON.stringify(scanState,null,2)
+)
+
+}
+
+async function run(){
+
+await scanProposals()
+
+fs.writeFileSync(
+STATE_FILE,
 JSON.stringify(polls,null,2)
 )
 
-console.log("Poll sync done")
+console.log("Automation complete")
 
 }
 
