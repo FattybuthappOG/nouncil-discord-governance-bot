@@ -1,6 +1,8 @@
-import Safe from "@safe-global/protocol-kit"
+import SafeProtocolKit from "@safe-global/protocol-kit"
 import SafeApiKit from "@safe-global/api-kit"
 import { ethers } from "ethers"
+
+const Safe = SafeProtocolKit.default || SafeProtocolKit
 
 console.log("🚀 Safe automation boot")
 
@@ -35,14 +37,13 @@ console.log("✅ Safe connected")
 
 /* ================= SAFE API ================= */
 
-const safeApi = new SafeApiKit({
-  chainId: 1
-})
+const apiKit = new SafeApiKit.default
+  ? new SafeApiKit.default({ chainId: 1 })
+  : new SafeApiKit({ chainId: 1 })
 
 console.log("✅ Safe API connected")
 
-/* ================= DEMO TX ================= */
-/* Replace later with real governance tx */
+/* ================= TEST TX ================= */
 
 const safeTransaction =
   await protocolKit.createTransaction({
@@ -55,20 +56,21 @@ const safeTransaction =
     ]
   })
 
-const txHash =
-  await protocolKit.getTransactionHash(safeTransaction)
+const safeTxHash =
+  await protocolKit.getTransactionHash(
+    safeTransaction
+  )
 
-const senderSignature =
-  await protocolKit.signHash(txHash)
+const signature =
+  await protocolKit.signHash(safeTxHash)
 
-await safeApi.proposeTransaction({
+await apiKit.proposeTransaction({
   safeAddress: SAFE_ADDRESS,
   safeTransactionData:
     safeTransaction.data,
-  safeTxHash: txHash,
+  safeTxHash,
   senderAddress: signer.address,
-  senderSignature:
-    senderSignature.data
+  senderSignature: signature.data
 })
 
 console.log("✅ Transaction proposed to Safe queue")
