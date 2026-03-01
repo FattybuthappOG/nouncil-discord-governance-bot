@@ -1,33 +1,28 @@
-name: Nouncil Governance Automation
+name: Nouns Safe Automation
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v3
         with:
-          node-version: 20
+          node-version: 18
 
-      - name: Install dependencies
-        run: npm install
+      - run: npm install
 
-      - name: Run Governance Automation
-        run: node automation.js
+      - run: node automation.js
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
 
-      - name: Submit Safe Transaction
-        run: node safe-submit.js
+      - run: node safe-submit.js
         env:
           SAFE_PRIVATE_KEY: ${{ secrets.SAFE_PRIVATE_KEY }}
           SAFE_ADDRESS: ${{ secrets.SAFE_ADDRESS }}
