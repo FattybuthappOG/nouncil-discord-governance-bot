@@ -1,29 +1,29 @@
-name: Nouns Safe Automation
+name: Nouncil Automation
 
 on:
-  schedule:
-    - cron: "17 */4 * * *"
   workflow_dispatch:
+
+  schedule:
+    - cron: "0 */2 * * *"   # every 2 hours ONLY
+
+concurrency:
+  group: nouncil-bot
+  cancel-in-progress: true
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - run: npm install
 
       - run: node automation.js
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-
-      - run: node safe-submit.js
-        env:
-          SAFE_PRIVATE_KEY: ${{ secrets.SAFE_PRIVATE_KEY }}
-          SAFE_ADDRESS: ${{ secrets.SAFE_ADDRESS }}
-          RPC_URL: ${{ secrets.RPC_URL }}
